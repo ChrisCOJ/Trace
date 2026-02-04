@@ -7,78 +7,79 @@
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_system.h"
+#include "esp_log.h"
+#include "../include/font5x7.h"
 
 
 #define X_START 0
 #define Y_START 20
 
 
-DRAM_ATTR static const lcd_init_cmd init_cmds[15] = {
-    /* Memory Data Access Control, MX=MV=1, MY=ML=MH=0, RGB=0 */
-    {MADCTL, {0x08}, 1},
-    /* Interface Pixel Format, 16bits/pixel for RGB/MCU interface */
-    {PIXEL_FORMAT, {0x55}, 1},
-    /* Porch Setting */
-    {PORCH_CONTROL, {0x0c, 0x0c, 0x00, 0x33, 0x33}, 5},
-    /* Gate Control, Vgh=13.65V, Vgl=-10.43V */
-    {GATE_CONTROL, {0x45}, 1},
-    /* VCOM Setting, VCOM=1.175V */
-    {VCOM, {0x2B}, 1},
-    /* LCM Control, XOR: BGR, MX, MH */
-    {LCM_CONTROL, {0x2C}, 1},
-    /* VDV and VRH Command Enable, enable=1 */
-    {VDVVRHEN, {0x01, 0xff}, 2},
-    /* VRH Set, Vap=4.4+... */
-    {VRH, {0x11}, 1},
-    /* VDV Set, VDV=0 */
-    {VDV, {0x20}, 1},
-    /* Frame Rate Control, 60Hz, inversion=0 */
-    {FPS_CONTROL, {0x0f}, 1},
-    /* Power Control 1, AVDD=6.8V, AVCL=-4.8V, VDDS=2.3V */
-    {POWER_CONTROL, {0xA4, 0xA1}, 2},
-    /* Positive Voltage Gamma Control */
-    {GAMMA_POS, {0xD0, 0x00, 0x05, 0x0E, 0x15, 0x0D, 0x37, 0x43, 0x47, 0x09, 0x15, 0x12, 0x16, 0x19}, 14},
-    /* Negative Voltage Gamma Control */
-    {GAMMA_NEG, {0xD0, 0x00, 0x05, 0x0D, 0x0C, 0x06, 0x2D, 0x44, 0x40, 0x0E, 0x1C, 0x18, 0x16, 0x19}, 14},
-    /* Sleep Out */
-    {SLEEP_OUT, {0}, 0x00},
-    /* Display On */
-    {DISP_ON, {0}, 0x00},
+static const char *TAG_DISPLAY = "display";
+
+
+/* ST7789V2 init sequence */
+DRAM_ATTR static const lcd_init_cmd init_cmds[16] = {
+    { MADCTL,        {0x00},                                                    1  }, /* MADCTL: orientation/BGR */
+    { PIXEL_FORMAT,  {0x55},                                                    1  }, /* 16bpp RGB565 */
+    { PORCH_CONTROL, {0x0c, 0x0c, 0x00, 0x33, 0x33},                            5  }, /* porch */
+    { GATE_CONTROL,  {0x45},                                                    1  }, /* gate */
+    { VCOM,          {0x2B},                                                    1  }, /* VCOM */
+    { LCM_CONTROL,   {0x2C},                                                    1  }, /* LCM control */
+    { VDVVRHEN,      {0x01, 0xff},                                              2  }, /* enable VDV/VRH */
+    { VRH,           {0x11},                                                    1  }, /* VRH */
+    { VDV,           {0x20},                                                    1  }, /* VDV */
+    { FPS_CONTROL,   {0x0f},                                                    1  }, /* frame rate */
+    { POWER_CONTROL, {0xA4, 0xA1},                                              2  }, /* power */
+    { GAMMA_POS,     {0xD0, 0x00, 0x05, 0x0E, 0x15, 0x0D, 0x37, 0x43, 0x47,
+                      0x09, 0x15, 0x12, 0x16, 0x19},                           14 },  /* gamma + */
+    { GAMMA_NEG,     {0xD0, 0x00, 0x05, 0x0D, 0x0C, 0x06, 0x2D, 0x44, 0x40,
+                      0x0E, 0x1C, 0x18, 0x16, 0x19},                           14 },  /* gamma - */
+    { SLEEP_OUT,     {0},                                                       0  }, /* sleep out */
+    { DISP_ON,       {0},                                                       0  }, /* display on */
+    { INVON,         {0},                                                       0 },  /* Invert colours */
 };
 
 
-void send_display_cmd(spi_device_handle_t dev_handle, const uint8_t cmd, bool keep_cs_active) {
-    esp_err_t ret;
-    spi_transaction_t spi_msg;
-    memset(&spi_msg, 0, sizeof(spi_msg));               // Zero out the transaction
-    spi_msg.length = 8;                                 // Command is 8 bits
-    spi_msg.tx_buffer = &cmd;                           // The data is the cmd itself
-    spi_msg.user = (void*)0;                            // D/C needs to be set to 0
+/* SPI D/C is driven via pre-transfer callback using transaction->user */
+static void send_display_cmd(spi_device_handle_t dev_handle, const uint8_t cmd, bool keep_cs_active) {
+    spi_transaction_t transaction;
+    memset(&transaction, 0, sizeof(transaction));
+
+    transaction.length    = 8;
+    transaction.tx_buffer = &cmd;
+    transaction.user      = (void*)0;
+
     if (keep_cs_active) {
-        spi_msg.flags = SPI_TRANS_CS_KEEP_ACTIVE;       // Keep CS active after data transfer
+        transaction.flags = SPI_TRANS_CS_KEEP_ACTIVE;
     }
-    ret = spi_device_polling_transmit(dev_handle, &spi_msg);
-    assert(ret == ESP_OK);
+
+    esp_err_t result = spi_device_polling_transmit(dev_handle, &transaction);
+    assert(result == ESP_OK);
 }
 
 
-void send_display_data(spi_device_handle_t dev_handle, const uint8_t *data, int len) {
-    esp_err_t ret;
-    spi_transaction_t spi_msg;
+static void send_display_data(spi_device_handle_t dev_handle, const uint8_t *data, int data_length) {
+    if (data_length == 0) return;
 
-    if (len == 0) {
-        return;
-    }
-    memset(&spi_msg, 0, sizeof(spi_msg));               // Zero out the transaction
-    spi_msg.length = len * 8;                           // * 8 to get the length in bits
-    spi_msg.tx_buffer = data;                          
-    spi_msg.user = (void*)1;                            // D/C needs to be set to 1
-    ret = spi_device_polling_transmit(dev_handle, &spi_msg);
-    assert(ret == ESP_OK);
+    spi_transaction_t transaction;
+    memset(&transaction, 0, sizeof(transaction));
+
+    transaction.length    = data_length * 8;
+    transaction.tx_buffer = data;
+    transaction.user      = (void*)1;
+
+    esp_err_t result = spi_device_polling_transmit(dev_handle, &transaction);
+    assert(result == ESP_OK);
 }
 
 
-void send_cmd_with_data(spi_device_handle_t dev_handle, uint8_t cmd, const uint8_t *data, int data_len, bool keep_active) {
+/* Convenience wrapper for cmd + payload */
+static void send_cmd_with_data(spi_device_handle_t dev_handle,
+                        uint8_t cmd,
+                        const uint8_t *data,
+                        int data_len,
+                        bool keep_active) {
     ESP_ERROR_CHECK(spi_device_acquire_bus(dev_handle, portMAX_DELAY));
 
     send_display_cmd(dev_handle, cmd, keep_active);
@@ -88,171 +89,279 @@ void send_cmd_with_data(spi_device_handle_t dev_handle, uint8_t cmd, const uint8
 }
 
 
-// This function is called (in irq context!) just before a transmission starts. It will
-// set the D/C line to the value indicated in the user field.
-void lcd_spi_pre_transfer_callback(spi_transaction_t *spi_msg) {
-    int dc = (int)spi_msg->user;
-    gpio_set_level(DATA_COMMAND, dc);
+/* SPI pre-callback: flip D/C for cmd vs data */
+static void lcd_spi_pre_transfer_callback(spi_transaction_t *transaction) {
+    int dc_level = (int)transaction->user;
+    gpio_set_level(DATA_COMMAND, dc_level);
 }
 
 
-/* To send a set of lines we have to send a command, 2 data bytes, another command, 2 more data bytes and another command
- * before sending the line data itself; a total of 6 transactions. (We can't put all of this in just one transaction
- * because the D/C line needs to be toggled in the middle.)
- * This routine queues these commands up as interrupt transactions so they get
- * sent faster (compared to calling spi_device_transmit several times), and at
- * the mean while the lines for next transactions can get calculated.
- */
-static void send_lines(spi_device_handle_t spi, int row_index, uint16_t *pixel_block)
-{
-    esp_err_t ret;
+/* Queue CASET/RASET/RAMWR + pixel block for a band of lines */
+static void send_lines(spi_device_handle_t spi_handle,
+                       int row_index,
+                       uint16_t *pixel_block) {
+    static spi_transaction_t transactions[6];
 
-    // 6 transactions:
-    // 0: CASET cmd, 1: CASET data(4)
-    // 2: RASET cmd, 3: RASET data(4)
-    // 4: RAMWR cmd, 5: pixel data block
-    static spi_transaction_t trans[6];
+    for (int transaction_index = 0; transaction_index < 6; transaction_index++) {
+        memset(&transactions[transaction_index], 0, sizeof(transactions[transaction_index]));
+        transactions[transaction_index].flags = SPI_TRANS_USE_TXDATA;
 
-    // Initialize the common bits
-    for (int i = 0; i < 6; i++) {
-        memset(&trans[i], 0, sizeof(trans[i]));
-        trans[i].flags = SPI_TRANS_USE_TXDATA;
-
-        if ((i & 1) == 0) {
-            // Command transactions
-            trans[i].length = 8;
-            trans[i].user   = (void*)0;   // D/C = 0
+        const bool is_command = ((transaction_index & 1) == 0);
+        if (is_command) {
+            transactions[transaction_index].length = 8;
+            transactions[transaction_index].user   = (void*)0;
         } else {
-            // Data transactions (we use 4 bytes for CASET/RASET)
-            trans[i].length = 8 * 4;
-            trans[i].user   = (void*)1;   // D/C = 1
+            transactions[transaction_index].length = 8 * 4;
+            transactions[transaction_index].user   = (void*)1;
         }
     }
 
     for (int i = 0; i < 5; i++) {
-        trans[i].flags |= SPI_TRANS_CS_KEEP_ACTIVE;
+        transactions[i].flags |= SPI_TRANS_CS_KEEP_ACTIVE;
     }
 
-    // Compute the address window for this block
-    const uint16_t col_start = X_START;
-    const uint16_t col_end   = X_START + DISPLAY_WIDTH - 1;
+    const uint16_t column_start = X_START;
+    const uint16_t column_end   = X_START + DISPLAY_WIDTH - 1;
 
     const uint16_t row_start = Y_START + row_index;
     const uint16_t row_end   = Y_START + row_index + PARALLEL_SPI_LINES - 1;
 
-    // CASET (0x2A): column start/end
-    trans[0].tx_data[0] = 0x2A;
-    trans[1].tx_data[0] = col_start >> 8;
-    trans[1].tx_data[1] = col_start & 0xFF;
-    trans[1].tx_data[2] = col_end >> 8;
-    trans[1].tx_data[3] = col_end & 0xFF;
+    transactions[0].tx_data[0] = 0x2A;
+    transactions[1].tx_data[0] = column_start >> 8;
+    transactions[1].tx_data[1] = column_start & 0xFF;
+    transactions[1].tx_data[2] = column_end >> 8;
+    transactions[1].tx_data[3] = column_end & 0xFF;
 
-    // RASET (0x2B): row start/end
-    trans[2].tx_data[0] = 0x2B;
-    trans[3].tx_data[0] = row_start >> 8;
-    trans[3].tx_data[1] = row_start & 0xFF;
-    trans[3].tx_data[2] = row_end   >> 8;
-    trans[3].tx_data[3] = row_end   & 0xFF;
+    transactions[2].tx_data[0] = 0x2B;
+    transactions[3].tx_data[0] = row_start >> 8;
+    transactions[3].tx_data[1] = row_start & 0xFF;
+    transactions[3].tx_data[2] = row_end >> 8;
+    transactions[3].tx_data[3] = row_end & 0xFF;
 
-    // RAMWR (0x2C): memory write
-    trans[4].tx_data[0] = 0x2C;
+    transactions[4].tx_data[0] = 0x2C;
 
-    // Pixel data block (must contain DISPLAY_WIDTH * PARALLEL_SPI_LINES pixels)
-    trans[5].tx_buffer = pixel_block;
-    trans[5].length    = DISPLAY_WIDTH * PARALLEL_SPI_LINES * sizeof(uint16_t) * 8;
-    trans[5].user      = (void*)1;     // D/C = 1 for data
-    trans[5].flags     = 0;            // NOT using TXDATA here
+    transactions[5].tx_buffer = pixel_block;
+    transactions[5].length    = DISPLAY_WIDTH * PARALLEL_SPI_LINES * sizeof(uint16_t) * 8;
+    transactions[5].user      = (void*)1;
+    transactions[5].flags     = 0;
 
-    // Queue all transactions
-    for (int i = 0; i < 6; i++) {
-        ret = spi_device_queue_trans(spi, &trans[i], portMAX_DELAY);
-        assert(ret == ESP_OK);
+    for (int transaction_index = 0; transaction_index < 6; transaction_index++) {
+        esp_err_t result = spi_device_queue_trans(spi_handle,
+                                                  &transactions[transaction_index],
+                                                  portMAX_DELAY);
+        assert(result == ESP_OK);
     }
 }
 
 
-static void send_line_finish(spi_device_handle_t spi) {
-    spi_transaction_t *rtrans;
-    esp_err_t ret;
-    // Wait for all 6 transactions to be done and get back the results.
-    for (int x = 0; x < 6; x++) {
-        ret = spi_device_get_trans_result(spi, &rtrans, portMAX_DELAY);
-        assert(ret == ESP_OK);
+/* Block until the queued band has fully completed */
+static void send_line_finish(spi_device_handle_t spi_handle)
+{
+    spi_transaction_t *returned_transaction = NULL;
+
+    for (int completed = 0; completed < 6; completed++) {
+        esp_err_t result = spi_device_get_trans_result(spi_handle,
+                                                       &returned_transaction,
+                                                       portMAX_DELAY);
+        assert(result == ESP_OK);
     }
 }
 
 
-void display_fill_white(spi_device_handle_t dev_handle) {
-    static uint16_t line[DISPLAY_WIDTH * PARALLEL_SPI_LINES];
+/* ------------------- Text Render ------------------- */
+/* Draw a solid block (scale x scale) */
+static inline void draw_block(spi_device_handle_t display, uint16_t x, uint16_t y, uint8_t scale, uint16_t color) {
+    /* small stack buffer */
+    uint16_t line[16];
+    if (scale == 0 || scale > 4) return;
 
-    // Prepare one white line
-    for (int i = 0; i < DISPLAY_WIDTH * PARALLEL_SPI_LINES; i++) {
-        line[i] = 0xFFFF;
+    for (uint8_t i = 0; i < scale; i++) line[i] = color;
+
+    for (uint8_t row = 0; row < scale; row++) {
+        display_write(display, x, (uint16_t)(y + row), scale, 1, line);
+    }
+}
+
+
+static void draw_char(spi_device_handle_t display, uint16_t x, uint16_t y, char c, 
+                      uint16_t fg, uint16_t bg, bool transparent_bg, uint8_t scale) {
+    if (scale == 0) return;
+
+    const uint8_t *glyph = get_glyph(c);
+    if (!glyph) return;
+
+    // 5 columns × 7 rows
+    for (uint8_t col = 0; col < 5; col++) {
+        uint8_t bits = glyph[col];
+
+        for (uint8_t row = 0; row < 7; row++) {
+            bool color = (bits & (1u << row)) != 0;
+
+        if (!color && transparent_bg) {
+            continue;
+        }
+
+            // scaled pixel = filled block
+            draw_block(display,
+                       (uint16_t)(x + col * scale),
+                       (uint16_t)(y + row * scale),
+                       scale,
+                       color);
+        }
+    }
+    // 1-column spacing as background
+    draw_block(display,
+               (uint16_t)(x + 5 * scale),
+               y,
+               scale,
+               bg);
+}
+
+
+void draw_text(spi_device_handle_t display, uint16_t x, uint16_t y, const char *text, 
+               uint16_t fg, uint16_t bg, bool transparent_bg, uint8_t scale) {
+    if (!text || scale == 0) return;
+
+    uint16_t cx = x;
+    const uint16_t advance = (uint16_t)(6 * scale); // 5 cols + 1 space
+
+    while (*text) {
+        draw_char(display, cx, y, *text, fg, bg, transparent_bg, scale);
+        cx = (uint16_t)(cx + advance);
+        text++;
+    }
+}
+
+
+
+
+/* Full-screen clear using band writes */
+void display_fill(spi_device_handle_t dev_handle, uint16_t colour) {
+    static uint16_t band_buffer[DISPLAY_WIDTH * PARALLEL_SPI_LINES];
+
+    for (int pixel_index = 0; pixel_index < DISPLAY_WIDTH * PARALLEL_SPI_LINES; pixel_index++) {
+        band_buffer[pixel_index] = colour;
     }
 
     ESP_ERROR_CHECK(spi_device_acquire_bus(dev_handle, portMAX_DELAY));
-    // Fill with white lines
-    for (int y = 0; y < DISPLAY_HEIGHT; y+= PARALLEL_SPI_LINES) {
-        send_lines(dev_handle, y, line);
+
+    for (int y = 0; y < DISPLAY_HEIGHT; y += PARALLEL_SPI_LINES) {
+        send_lines(dev_handle, y, band_buffer);
         send_line_finish(dev_handle);
     }
+
     spi_device_release_bus(dev_handle);
 }
 
 
-display_spi_ctx display_init() {
-    spi_device_handle_t display_spi_handle;
-    spi_bus_config_t spi_bus_config = {
-        .mosi_io_num = SPI_MOSI,
-        .miso_io_num = -1,
-        .sclk_io_num = SCLK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
+/* SPI init + ST7789 init sequence */
+display_spi_ctx display_init(void) {
+    spi_device_handle_t display_spi_handle = NULL;
+
+    spi_bus_config_t bus_config = {
+        .mosi_io_num     = SPI_MOSI,
+        .miso_io_num     = -1,
+        .sclk_io_num     = SCLK,
+        .quadwp_io_num   = -1,
+        .quadhd_io_num   = -1,
         .max_transfer_sz = PARALLEL_SPI_LINES * DISPLAY_WIDTH * 2 + 8
     };
 
-    spi_device_interface_config_t display_spi_config = {
+    spi_device_interface_config_t device_config = {
         .clock_speed_hz = 8 * 1000 * 1000,
-        .mode = 0,
-        .spics_io_num = CHIP_SELECT,
-        .queue_size = 7,                        // We want to be able to queue 7 transactions at a time
-        .pre_cb = lcd_spi_pre_transfer_callback,
+        .mode           = 0,
+        .spics_io_num    = CHIP_SELECT,
+        .queue_size      = 7,
+        .pre_cb          = lcd_spi_pre_transfer_callback,
     };
 
-    // Initialize the SPI bus
-    esp_err_t ret = spi_bus_initialize(LCD_HOST, &spi_bus_config, SPI_DMA_CH_AUTO);
-    ESP_ERROR_CHECK(ret);
-    // Attach the LCD to the SPI bus
-    ret = spi_bus_add_device(LCD_HOST, &display_spi_config, &display_spi_handle);
-    ESP_ERROR_CHECK(ret);
+    esp_err_t result = spi_bus_initialize(LCD_HOST, &bus_config, SPI_DMA_CH_AUTO);
+    ESP_ERROR_CHECK(result);
 
-    // Initialize non-SPI GPIOs
-    gpio_config_t io_conf = {};
-    io_conf.pin_bit_mask = ((1ULL << DATA_COMMAND) | (1ULL << SPI_RST) | (1ULL << BACKLIGHT));
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
-    gpio_config(&io_conf);
+    result = spi_bus_add_device(LCD_HOST, &device_config, &display_spi_handle);
+    ESP_ERROR_CHECK(result);
 
-    // Reset display
+    gpio_config_t gpio_output_config = {0};
+    gpio_output_config.pin_bit_mask = ((1ULL << DATA_COMMAND) |
+                                       (1ULL << SPI_RST) |
+                                       (1ULL << BACKLIGHT));
+    gpio_output_config.mode         = GPIO_MODE_OUTPUT;
+    gpio_output_config.pull_up_en   = GPIO_PULLUP_ENABLE;
+    gpio_config(&gpio_output_config);
+
     gpio_set_level(SPI_RST, 0);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(100));
     gpio_set_level(SPI_RST, 1);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(100));
 
-
-    // Send init commands
-    for (int i = 0; i < sizeof(init_cmds) / sizeof(lcd_init_cmd); ++i) {
-        send_cmd_with_data(display_spi_handle, init_cmds[i].cmd, init_cmds[i].data, init_cmds[i].data_len, false);
-        vTaskDelay(200 / portTICK_PERIOD_MS);
+    for (int init_index = 0; init_index < (int)(sizeof(init_cmds) / sizeof(init_cmds[0])); init_index++) {
+        send_cmd_with_data(display_spi_handle,
+                           init_cmds[init_index].cmd,
+                           init_cmds[init_index].data,
+                           init_cmds[init_index].data_len,
+                           false);
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 
-    ///Enable backlight
     gpio_set_level(BACKLIGHT, LCD_BACKLIGHT_ON_LEVEL);
-    
+
     display_spi_ctx ctx = {
         .dev_handle = display_spi_handle,
-        .ret_code = 0
+        .ret_code   = 0
     };
     return ctx;
 }
 
+
+/* Write an RGB565 block into an address window */
+void display_write(spi_device_handle_t dev_handle,
+                   uint16_t x, uint16_t y,
+                   uint16_t w, uint16_t h,
+                   const uint16_t *pixels)
+{
+    if (!pixels || w == 0 || h == 0) return;
+
+    const uint16_t x0 = x + X_START;
+    const uint16_t y0 = y + Y_START;
+    const uint16_t x1 = x0 + w - 1;
+    const uint16_t y1 = y0 + h - 1;
+
+    const uint8_t caset_payload[4] = { x0 >> 8, x0 & 0xFF, x1 >> 8, x1 & 0xFF };
+    const uint8_t raset_payload[4] = { y0 >> 8, y0 & 0xFF, y1 >> 8, y1 & 0xFF };
+
+    ESP_ERROR_CHECK(spi_device_acquire_bus(dev_handle, portMAX_DELAY));
+
+    send_display_cmd(dev_handle, 0x2A, true);
+    send_display_data(dev_handle, caset_payload, sizeof(caset_payload));
+
+    send_display_cmd(dev_handle, 0x2B, true);
+    send_display_data(dev_handle, raset_payload, sizeof(raset_payload));
+
+    send_display_cmd(dev_handle, 0x2C, true);
+
+    /* RGB565 needs byte swap on little-endian CPU */
+    const size_t total_pixels = (size_t)w * (size_t)h;
+
+    static uint16_t swap_buffer[240];
+    size_t pixels_sent = 0;
+
+    while (pixels_sent < total_pixels) {
+        size_t chunk_pixels = total_pixels - pixels_sent;
+        const size_t swap_capacity = sizeof(swap_buffer) / sizeof(swap_buffer[0]);
+
+        if (chunk_pixels > swap_capacity) chunk_pixels = swap_capacity;
+
+        for (size_t i = 0; i < chunk_pixels; i++) {
+            uint16_t pixel = pixels[pixels_sent + i];
+            swap_buffer[i] = (uint16_t)((pixel << 8) | (pixel >> 8));
+        }
+
+        send_display_data(dev_handle,
+                          (const uint8_t*)swap_buffer,
+                          (int)(chunk_pixels * sizeof(uint16_t)));
+
+        pixels_sent += chunk_pixels;
+    }
+
+    spi_device_release_bus(dev_handle);
+}

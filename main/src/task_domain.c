@@ -7,16 +7,17 @@ static const char *TAG = "task_domain";
 
 
 // Testing
-void task_init(task *task, task_id id, float base_priority, time_ms created_at, time_ms time_limit, uint8_t table) {
+void task_init(task *task, task_id id, task_kind kind, time_ms created_at, uint8_t table) {
     memset(task, 0, sizeof(*task));
     task->id = id;
     task->status = TASK_ELIGIBLE;
-    task->base_priority = base_priority;
+    task->base_priority = TASK_BASE_PRIORITY[kind];
     task->created_at = created_at;
-    task->time_limit = time_limit;
+    task->time_limit = TASK_TIME_LIMIT[kind] + created_at;
     task->suppress_until = 0;
     task->ignore_count = 0;
-    task->table = table;
+    task->table_number = table;
+    task->kind = kind;
 }
 // Testing
 
@@ -58,9 +59,7 @@ return_status refresh_task(task *task, time_ms current_time) {
                     "unsuppress t=%lu task=(%u,%u) table=%u",
                     (unsigned long)current_time,
                     (unsigned)task->id.index, (unsigned)task->id.generation,
-                    (unsigned)task->table);
-
-        task->status = TASK_ELIGIBLE;
+                    (unsigned)task->table_number);
             
         task->status = TASK_ELIGIBLE;
     }
@@ -69,18 +68,18 @@ return_status refresh_task(task *task, time_ms current_time) {
 }
 
 
-bool is_task_schedulable(const task *task, time_ms current_time) {
-    if (!task) return false;
+// task_status is_task_schedulable(const task *task, time_ms current_time) {
+//     if (!task) return false;
 
-    if (task->status == TASK_KILLED) return false;
-    if (task->status == TASK_COMPLETED) return false;
+//     if (task->status == TASK_KILLED) return false;
+//     if (task->status == TASK_COMPLETED) return false;
 
-    if (task->status == TASK_SUPPRESSED) {
-        return current_time >= task->suppress_until;
-    }
+//     if (task->status == TASK_SUPPRESSED) {
+//         return current_time >= task->suppress_until;
+//     }
 
-    return task->status == TASK_ELIGIBLE;
-}
+//     return task->status == TASK_ELIGIBLE;
+// }
 
 
 return_status kill_task(task *task) {
@@ -90,4 +89,27 @@ return_status kill_task(task *task) {
     task->suppress_until = 0;
 
     return SUCCESS;
+}
+
+
+const char *task_kind_to_str(task_kind kind) {
+    switch (kind) {
+        case SERVE_WATER:   return "SERVE_WATER";
+        case TAKE_ORDER:    return "TAKE_ORDER";
+        case SERVE_ORDER:   return "SERVE_ORDER";
+        case MONITOR_TABLE: return "MONITOR_TABLE";
+        case CLEAR_TABLE:   return "CLEAR_TABLE";
+        default:            return "UNKNOWN";
+    }
+}
+
+
+const char *task_status_to_str(task_status status) {
+    switch (status) {
+        case TASK_ELIGIBLE:     return "TASK_ELIGIBLE";
+        case TASK_SUPPRESSED:   return "TASK_SUPRESSED";
+        case TASK_COMPLETED:    return "TASK_COMPLETED";
+        case TASK_KILLED:       return "TASK_KILLED";
+        default:                return "UNKNOWN";
+    }
 }

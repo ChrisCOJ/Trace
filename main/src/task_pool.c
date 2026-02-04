@@ -80,3 +80,77 @@ const task *task_pool_get_const(const task_pool *pool, task_id id) {
 
     return &slot->task_instance;
 }
+
+
+static inline task_id invalid_task_id(void) {
+    task_id id = { .index = UINT16_MAX, .generation = 0 };
+    return id;
+}
+
+
+task_id task_pool_find_by_key(const task_pool *pool, uint8_t table_number, task_kind kind) {
+    if (!pool) return invalid_task_id();
+
+    for (uint16_t i = 0; i < TASK_POOL_CAPACITY; ++i) {
+        const task_slot *slot = &pool->slots[i];
+        if (!slot->occupied) continue;
+
+        const task *task = &slot->task_instance;
+
+        // Only treat it as “existing” if it’s still relevant
+        if (task->table_number == table_number && task->kind == kind &&
+            task->status != TASK_KILLED && task->status != TASK_COMPLETED) {
+
+            task_id id = { .index = i, .generation = slot->generation };
+            return id;
+        }
+    }
+    return invalid_task_id();
+}
+
+
+task_id task_pool_add(task_pool *pool, uint8_t table_number, task_kind kind, time_ms now) {
+    if (!pool) return invalid_task_id();
+
+    // If a relevant task already exists, update it and return it.
+    task_id existing = task_pool_find_by_key(pool, table_number, kind);
+    if (existing.index != UINT16_MAX) {
+        task *task = task_pool_get(pool, existing);
+        if (task) {
+            // Update “spec defaults".
+            task->base_priority = TASK_BASE_PRIORITY[kind];
+            task->time_limit = now + TASK_TIME_LIMIT[kind];
+        }
+        return existing;
+    }
+
+    // If a dead version exists (completed/killed), free it so we can reuse the slot.
+    for (uint16_t i = 0; i < TASK_POOL_CAPACITY; ++i) {
+        task_slot *slot = &pool->slots[i];
+        if (!slot->occupied) continue;
+
+        task *task = &slot->task_instance;
+        if (task->table_number == table_number && task->kind == kind &&
+            (task->status == TASK_KILLED || task->status == TASK_COMPLETED)) {
+
+            task_id dead_task = { .index = i, .generation = slot->generation };
+            task_pool_free(pool, dead_task);
+            break;
+        }
+    }
+
+    // Allocate a new slot and initialise
+    task_id id = task_pool_allocate(pool);
+    if (id.index == UINT16_MAX) return id;
+
+    task *task = task_pool_get(pool, id);
+    if (!task) return invalid_task_id();
+
+    task_init(task, id,
+              kind,
+              now,
+              table_number);
+
+    return id;
+}
+

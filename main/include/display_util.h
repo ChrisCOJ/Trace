@@ -39,6 +39,8 @@
 #define VDV                             0x20
 #define VDVVRHEN                        0xC2
 #define VRH                             0xC3
+#define INVON                           0x21
+
 
 
 typedef struct {
@@ -57,15 +59,71 @@ typedef struct {
 } lcd_init_cmd;
 
 
-void send_display_cmd(spi_device_handle_t dev_handle, const uint8_t cmd, bool keep_cs_active);
-void send_display_data(spi_device_handle_t dev_handle, const uint8_t *data, int len);
-void send_cmd_with_data(spi_device_handle_t dev_handle, uint8_t cmd, const uint8_t *data, int data_len, bool keep_active);
-void lcd_spi_pre_transfer_callback(spi_transaction_t *spi_msg);
-static void send_lines(spi_device_handle_t spi, int ypos, uint16_t *linedata);
-static void send_line_finish(spi_device_handle_t spi);
-void display_fill_white(spi_device_handle_t dev_handle);
-display_spi_ctx display_init();
+/**
+ * Initialise the SPI display interface and ST7789V2 controller.
+ *
+ * Configures the SPI bus, attaches the display device, initialises GPIOs,
+ * performs a hardware reset, and executes the full ST7789V2 initialisation
+ * command sequence. The display backlight is enabled before returning.
+ *
+ * Timing / blocking behaviour:
+ *  - Blocks during SPI bus initialisation and device attachment.
+ *  - Performs multiple RTOS delays during reset and command sequencing
+ *    (hundreds of milliseconds total).
+ *  - Must not be called from a time-critical context.
+ *
+ * This function is intended to be called once during system startup.
+ *
+ * @return Display SPI context containing the device handle.
+ */
+display_spi_ctx display_init(void);
 
+
+/**
+ * Fill the entire display with a single RGB565 colour.
+ *
+ * Clears the display by repeatedly writing horizontal pixel bands using
+ * synchronous SPI transactions.
+ *
+ * Timing / blocking behaviour:
+ *  - Blocks for the duration of the full-screen transfer.
+ *  - Acquires the SPI bus for the entire operation.
+ *  - Performs no RTOS delays but may take several milliseconds depending
+ *    on SPI clock rate and display size.
+ *
+ * @param dev_handle SPI device handle for the display.
+ * @param colour RGB565 colour value to fill the screen with.
+ */
+void display_fill(spi_device_handle_t dev_handle, uint16_t colour);
+
+
+/**
+ * Write an RGB565 pixel block to a rectangular region of the display.
+ *
+ * Sets the display address window and writes pixel data in RGB565 format.
+ * Pixel data is byte-swapped internally to account for little-endian CPU
+ * representation.
+ *
+ * Timing / blocking behaviour:
+ *  - Blocks while acquiring the SPI bus and transmitting pixel data.
+ *  - Performs no RTOS delays.
+ *  - Runtime proportional to the number of pixels written.
+ *
+ * The caller must ensure that the pixel buffer remains valid for the
+ * duration of the call.
+ *
+ * @param dev_handle SPI device handle for the display.
+ * @param x X coordinate of the top-left corner (screen space).
+ * @param y Y coordinate of the top-left corner (screen space).
+ * @param w Width of the region in pixels.
+ * @param h Height of the region in pixels.
+ * @param pixels Pointer to RGB565 pixel data.
+ */
+void display_write(spi_device_handle_t dev_handle, uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_t *pixels);
+
+
+void draw_text(spi_device_handle_t display, uint16_t x, uint16_t y, const char *text, 
+               uint16_t fg, uint16_t bg, bool transparent_bg, uint8_t scale);
 
 
 #endif
