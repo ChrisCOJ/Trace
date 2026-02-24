@@ -48,6 +48,6 @@ void app_main(void) {
     // system_apply_table_fsm_event(0, EVENT_CUSTOMERS_SEATED, current_time);
 
     /* Runtime tasks */
-    xTaskCreate(ui_touch_task, "ui_touch", 4096, &display_context, 5, NULL);
+    xTaskCreate(ui_task, "ui_task", 4096, &display_context, 5, NULL);
     xTaskCreate(scheduler_tick_task, "sched_tick", 4096, NULL, 5, NULL);
 }

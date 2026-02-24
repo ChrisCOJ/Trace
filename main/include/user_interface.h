@@ -27,6 +27,14 @@ typedef enum {
 } ui_action;
 
 
+/* UI mode: main notifications vs table grid overlay vs take order table list */
+typedef enum { 
+    UI_MODE_MAIN, 
+    UI_MODE_TABLE_GRID,
+    UI_MODE_TAKE_ORDER_GRID,
+} ui_mode;
+
+
 typedef struct {
     bool has_task;
     task_id task_id;
@@ -81,7 +89,7 @@ void ui_draw_layout(spi_device_handle_t display);
  *
  * @param arg Unused task parameter.
  */
-void ui_touch_task(void *arg);
+void ui_task(void *arg);
 
 
 #endif

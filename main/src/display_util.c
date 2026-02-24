@@ -184,7 +184,7 @@ static inline void draw_block(spi_device_handle_t display, uint16_t x, uint16_t 
 
 
 static void draw_char(spi_device_handle_t display, uint16_t x, uint16_t y, char c, 
-                      uint16_t fg, uint16_t bg, bool transparent_bg, uint8_t scale) {
+                      uint16_t color, uint8_t scale) {
     if (scale == 0) return;
 
     const uint8_t *glyph = get_glyph(c);
@@ -195,9 +195,9 @@ static void draw_char(spi_device_handle_t display, uint16_t x, uint16_t y, char 
         uint8_t bits = glyph[col];
 
         for (uint8_t row = 0; row < 7; row++) {
-            bool color = (bits & (1u << row)) != 0;
+            bool char_color = (bits & (1u << row)) != 0;
 
-        if (!color && transparent_bg) {
+        if (!char_color) {
             continue;
         }
 
@@ -209,24 +209,18 @@ static void draw_char(spi_device_handle_t display, uint16_t x, uint16_t y, char 
                        color);
         }
     }
-    // 1-column spacing as background
-    draw_block(display,
-               (uint16_t)(x + 5 * scale),
-               y,
-               scale,
-               bg);
 }
 
 
 void draw_text(spi_device_handle_t display, uint16_t x, uint16_t y, const char *text, 
-               uint16_t fg, uint16_t bg, bool transparent_bg, uint8_t scale) {
+               uint16_t color, uint8_t scale) {
     if (!text || scale == 0) return;
 
     uint16_t cx = x;
-    const uint16_t advance = (uint16_t)(6 * scale); // 5 cols + 1 space
+    const uint16_t advance = (uint16_t)(CHAR_WIDTH * scale); // 5 cols + 1 space
 
     while (*text) {
-        draw_char(display, cx, y, *text, fg, bg, transparent_bg, scale);
+        draw_char(display, cx, y, *text, color, scale);
         cx = (uint16_t)(cx + advance);
         text++;
     }

@@ -123,7 +123,7 @@ void display_write(spi_device_handle_t dev_handle, uint16_t x, uint16_t y, uint1
 
 
 void draw_text(spi_device_handle_t display, uint16_t x, uint16_t y, const char *text, 
-               uint16_t fg, uint16_t bg, bool transparent_bg, uint8_t scale);
+               uint16_t color, uint8_t scale);
 
 
 #endif
