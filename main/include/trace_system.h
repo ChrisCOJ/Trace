@@ -46,10 +46,10 @@ void trace_system_init(const scheduler_config *cfg);
  * @param now_ms      Current system time in milliseconds, used for
  *                    state timing and task admission.
  */
-void system_apply_table_fsm_event(uint8_t table_index, fsm_transition_event ev, time_ms now);
+void system_apply_table_fsm_event(uint8_t table_index, fsm_transition_event ev, time_ms current_time_ms);
 
 
-void system_take_order_now(uint8_t table_index, time_ms now_ms);
+void system_take_order_now(uint8_t table_index, time_ms current_time_ms);
 
 
 void system_close_table(uint8_t table_index, time_ms current_time_ms);
@@ -65,7 +65,10 @@ void system_close_table(uint8_t table_index, time_ms current_time_ms);
  *                           scheduling and state transitions.
  * @return                   
  */
-bool system_apply_user_action_to_task(task_id shown_task_id, user_action action, time_ms current_time);
+bool system_apply_user_action_to_task(task_id shown_task_id, user_action action, time_ms current_time_ms);
+
+
+table_state system_get_table_state(uint8_t table_index);
 
 
 /**
@@ -85,7 +88,7 @@ bool system_apply_user_action_to_task(task_id shown_task_id, user_action action,
  * @param current_time Current system time in milliseconds, used for
  *                     FSM timing and scheduler decisions.
  */
-void trace_system_tick(time_ms now);
+void trace_system_tick(time_ms current_time_ms);
 
 
 // Read-only accessors for UI

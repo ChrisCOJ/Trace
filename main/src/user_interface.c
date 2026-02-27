@@ -27,6 +27,11 @@ static bool last_touch_pressed = false;
 static const uint16_t COLOR_LABEL_DEFAULT      = 0x0000;
 static const uint16_t COLOR_LABEL_ALTERNATIVE  = 0xFFFF;
 
+static bool TASK_STARTED                 = false;
+static bool TASK_PRESS_COMPLETE          = true;
+
+static uint8_t SCALE                     = 2;
+
 
 /* Simple rectangular hit region */
 typedef struct {
@@ -40,8 +45,10 @@ typedef struct {
 /* Button layout (screen-space coordinates) */
 static const rect BUTTON_IGNORE         = { .x = 10,  .y = 200,  .w = 100, .h = 60 };
 static const rect BUTTON_CLOSE_TABLE    = { .x = 10,  .y = 200,  .w = 100, .h = 60 };
-// static const rect BUTTON_CLOSE_TABLE    = { .x = 10,  .y = 30,  .w = 100, .h = 60 };
+
+static const rect BUTTON_START          = { .x = 10,  .y = 130, .w = 220, .h = 60 };
 static const rect BUTTON_COMPLETE       = { .x = 10,  .y = 130, .w = 220, .h = 60 };
+
 static const rect BUTTON_TAKEORDER      = { .x = 130, .y = 200,  .w = 100, .h = 60 };
 
 /* Top bar button to open table grid */
@@ -83,8 +90,11 @@ static void ui_update_snapshot_from_system() {
 }
 
 
-static void draw_label(spi_device_handle_t display, rect r, const char *label, size_t label_len, uint8_t scale, uint16_t text_color) {
-    if (label_len * CHAR_WIDTH * scale > r.w) {
+/* ------------ Draw functions ------------ */
+
+static void draw_label(spi_device_handle_t display, rect r, const char *label, size_t label_len, uint16_t text_color) {
+    // Split label in parts and arrange vertically if too long for its container.
+    if (label_len * CHAR_WIDTH * SCALE > r.w) {
         char label_cpy[32];
         strcpy(label_cpy, label);
         char *space = strchr(label_cpy, ' ');
@@ -94,37 +104,29 @@ static void draw_label(spi_device_handle_t display, rect r, const char *label, s
             *space = '\0';  // NULL terminate the first word to split the text into two parts
             const char *first_part = label_cpy;  // Now label points to the first word in the string
             const char *second_part = space + 1;
-            uint16_t first_part_x = r.x + r.w/2 - strlen(first_part) * CHAR_WIDTH * scale/2;
-            uint16_t first_part_y = r.y + r.h/2 - (CHAR_HEIGHT * 2 + VERTICAL_SPACING) * scale / 2;
-            uint16_t second_part_x = r.x + r.w/2 - strlen(second_part) * CHAR_WIDTH * scale/2;
-            uint16_t second_part_y = first_part_y + CHAR_HEIGHT * scale + VERTICAL_SPACING;
+            uint16_t first_part_x = r.x + r.w/2 - strlen(first_part) * CHAR_WIDTH * SCALE/2;
+            uint16_t first_part_y = r.y + r.h/2 - (CHAR_HEIGHT * 2 + VERTICAL_SPACING) * SCALE / 2;
+            uint16_t second_part_x = r.x + r.w/2 - strlen(second_part) * CHAR_WIDTH * SCALE/2;
+            uint16_t second_part_y = first_part_y + CHAR_HEIGHT * SCALE + VERTICAL_SPACING;
 
-            draw_text(display, first_part_x, first_part_y, first_part, text_color, scale);
-            draw_text(display, second_part_x, second_part_y, second_part, text_color, scale);
+            draw_text(display, first_part_x, first_part_y, first_part, text_color, SCALE);
+            draw_text(display, second_part_x, second_part_y, second_part, text_color, SCALE);
             return;
         }
         else {
-            // Cut the text short
+            // Cut the text short. To do.
             return;
         }
     }
 
-    uint16_t text_x = r.x + r.w/2 - label_len * CHAR_WIDTH * scale/2;
-    uint16_t text_y = r.y + r.h/2 - CHAR_HEIGHT * scale/2;
+    uint16_t text_x = r.x + r.w/2 - label_len * CHAR_WIDTH * SCALE/2;
+    uint16_t text_y = r.y + r.h/2 - CHAR_HEIGHT * SCALE/2;
 
-    draw_text(display, text_x, text_y, label, text_color, scale);
+    draw_text(display, text_x, text_y, label, text_color, SCALE);
 }
 
 
-table_state system_get_table_state(uint8_t table_index) {
-    if (table_index >= MAX_TABLES) return TABLE_IDLE; // safe fallback
-    return table_fsm_instances[table_index].state;
-}
-
-
-/* ------------ Draw functions ------------ */
-
-/* Draw a filled rectangle using line-by-line writes */
+/* Draw a filled rectangle using line-by-line writes. Includes option to round corners */
 static void draw_filled_rect(spi_device_handle_t display,
     uint16_t x, uint16_t y,
     uint16_t width, uint16_t height,
@@ -185,48 +187,90 @@ static void draw_filled_rect(spi_device_handle_t display,
 }
 
 
+static void draw_button_complete(spi_device_handle_t display) {
+    const uint16_t COLOR_COMP = 0x07E0;
+    const char *complete_label = "Complete";
+
+    draw_filled_rect(display, BUTTON_COMPLETE.x, BUTTON_COMPLETE.y, BUTTON_COMPLETE.w, BUTTON_COMPLETE.h, COLOR_COMP, 10);
+    draw_label(display, BUTTON_COMPLETE, complete_label, strlen(complete_label), COLOR_LABEL_DEFAULT);
+}
+
+
+static void draw_button_start(spi_device_handle_t display) {
+    const uint16_t COLOR_START = 0x07E0;
+    const char *start_label = "Start";
+
+    draw_filled_rect(display, BUTTON_START.x, BUTTON_START.y, BUTTON_START.w, BUTTON_START.h, COLOR_START, 10);
+    draw_label(display, BUTTON_START, start_label, strlen(start_label), COLOR_LABEL_DEFAULT);
+}
+
+
+static void draw_button_close_table(spi_device_handle_t display) {
+    const uint16_t COLOR_CLOSE = 0xF800; // red
+    const char *close_table = "Close Table";
+
+    draw_filled_rect(display, BUTTON_CLOSE_TABLE.x, BUTTON_CLOSE_TABLE.y, BUTTON_CLOSE_TABLE.w, BUTTON_CLOSE_TABLE.h, COLOR_CLOSE, 10);
+    draw_label(display, BUTTON_CLOSE_TABLE, close_table, strlen(close_table), COLOR_LABEL_ALTERNATIVE);
+}
+
+
+static void draw_button_ignore(spi_device_handle_t display) {
+    const uint16_t COLOR_IGNORE = 0x39E7; // grey
+    const char *ignore_label = "Ignore";
+
+    draw_filled_rect(display, BUTTON_IGNORE.x, BUTTON_IGNORE.y, BUTTON_IGNORE.w, BUTTON_IGNORE.h, COLOR_IGNORE, 10);
+    draw_label(display, BUTTON_IGNORE, ignore_label, strlen(ignore_label), COLOR_LABEL_ALTERNATIVE);
+}
+
+
+static void draw_active_task_label(spi_device_handle_t display, ui_snapshot snap) {
+    if (snap.has_task) {
+        const char *task_kind_label = task_kind_to_str(snap.task_kind);
+        draw_label(display, (rect){.x=0,.y=60,.w=240,.h=30}, task_kind_label, strlen(task_kind_label), COLOR_LABEL_ALTERNATIVE);
+
+        char task_table_label[10];
+        snprintf(task_table_label, sizeof(task_table_label), "Table %d", snap.table_number + 1);
+        draw_label(display, (rect){.x=0,.y=70+CHAR_HEIGHT*SCALE,.w=240,.h=30}, task_table_label, strlen(task_table_label), COLOR_LABEL_ALTERNATIVE);
+    }
+    else {
+        const char *task_label = "NONE";
+        draw_label(display, (rect){.x=0,.y=70,.w=240,.h=30}, task_label, strlen(task_label), COLOR_LABEL_ALTERNATIVE);
+    }
+}
+
+
 static void ui_draw_main(spi_device_handle_t display) {
     const uint16_t BG                       = 0x0000;
-    const uint16_t COLOR_IGNORE             = 0x39E7; // grey
-    const uint16_t COLOR_COMP               = 0x07E0;
+
     const uint16_t COLOR_TAKE               = 0x39E7;
     const uint16_t COLOR_TOPBAR             = 0x39E7; // grey
-    const uint8_t scale                     = 2;
 
     const char *tables_label = "Tables";
-    const char *ignore_label = "Ignore";
-    const char *complete_label = "Complete";
     const char *take_order_label = "Take Order";
 
     display_fill(display, BG);
 
     // top bar
     draw_filled_rect(display, BUTTON_TABLES.x, BUTTON_TABLES.y, BUTTON_TABLES.w, BUTTON_TABLES.h, COLOR_TOPBAR, 10);
-    draw_label(display, BUTTON_TABLES, tables_label, strlen(tables_label), scale, COLOR_LABEL_ALTERNATIVE);
+    draw_label(display, BUTTON_TABLES, tables_label, strlen(tables_label), COLOR_LABEL_ALTERNATIVE);
 
     // buttons
-    draw_filled_rect(display, BUTTON_IGNORE.x, BUTTON_IGNORE.y, BUTTON_IGNORE.w, BUTTON_IGNORE.h, COLOR_IGNORE, 10);
-    draw_label(display, BUTTON_IGNORE, ignore_label, strlen(ignore_label), scale, COLOR_LABEL_ALTERNATIVE);
-
-    draw_filled_rect(display, BUTTON_COMPLETE.x, BUTTON_COMPLETE.y, BUTTON_COMPLETE.w, BUTTON_COMPLETE.h, COLOR_COMP, 10);
-    draw_label(display, BUTTON_COMPLETE, complete_label, strlen(complete_label), scale, COLOR_LABEL_DEFAULT);
-
-    draw_filled_rect(display, BUTTON_TAKEORDER.x, BUTTON_TAKEORDER.y, BUTTON_TAKEORDER.w, BUTTON_TAKEORDER.h, COLOR_TAKE, 10);
-    draw_label(display, BUTTON_TAKEORDER, take_order_label, strlen(take_order_label), scale, COLOR_LABEL_ALTERNATIVE);
-
-    if (UI_SNAPSHOT.has_task) {
-        const char *task_kind_label = task_kind_to_str(UI_SNAPSHOT.task_kind);
-        draw_label(display, (rect){.x=0,.y=60,.w=240,.h=30}, task_kind_label, strlen(task_kind_label), scale, COLOR_LABEL_ALTERNATIVE);
-
-        char task_table_label[10];
-        snprintf(task_table_label, sizeof(task_table_label), "Table %d", UI_SNAPSHOT.table_number + 1);
-        draw_label(display, (rect){.x=0,.y=70+CHAR_HEIGHT*scale,.w=240,.h=30}, task_table_label, strlen(task_table_label), scale, COLOR_LABEL_ALTERNATIVE);
-
+    if (UI_SNAPSHOT.task_kind == MONITOR_TABLE) {
+        draw_button_close_table(display);
     }
     else {
-        const char *task_label = "NONE";
-        draw_label(display, (rect){.x=0,.y=70,.w=240,.h=30}, task_label, strlen(task_label), scale, COLOR_LABEL_ALTERNATIVE);
+        draw_button_ignore(display);
     }
+
+    if (TASK_PRESS_COMPLETE) {
+        draw_button_start(display);
+    }
+    else if (TASK_STARTED) {
+        draw_button_complete(display);
+    }
+
+    draw_filled_rect(display, BUTTON_TAKEORDER.x, BUTTON_TAKEORDER.y, BUTTON_TAKEORDER.w, BUTTON_TAKEORDER.h, COLOR_TAKE, 10);
+    draw_label(display, BUTTON_TAKEORDER, take_order_label, strlen(take_order_label), COLOR_LABEL_ALTERNATIVE);
 }
 
 
@@ -234,35 +278,29 @@ static void ui_draw_grid(spi_device_handle_t display) {
     const uint16_t BG           = 0x0000;
     const uint16_t COLOR_TILE   = 0x7BEF; // light grey
     const uint16_t COLOR_BACK   = 0x39E7; // grey
-    const uint8_t scale         = 2;
 
     const char *select_table_label = "Select Table";
     const char *back_label = "Back";
 
     display_fill(display, BG);
 
-    draw_label(display, (rect){.x=10,.y=0,.w=240,.h=30}, select_table_label, strlen(select_table_label), scale, COLOR_LABEL_ALTERNATIVE);
+    draw_label(display, (rect){.x=10,.y=0,.w=240,.h=30}, select_table_label, strlen(select_table_label), COLOR_LABEL_ALTERNATIVE);
 
     for (int i = 0; i < (sizeof(TABLE_TILE) / sizeof(TABLE_TILE[0])); ++i) {
         draw_filled_rect(display, TABLE_TILE[i].x, TABLE_TILE[i].y, TABLE_TILE[i].w, TABLE_TILE[i].h, COLOR_TILE, 10);
         
         char table_label[4];
         snprintf(table_label, sizeof(table_label), "T%d", i + 1);
-        draw_label(display, TABLE_TILE[i], table_label, strlen(table_label), scale, COLOR_LABEL_DEFAULT);
+        draw_label(display, TABLE_TILE[i], table_label, strlen(table_label), COLOR_LABEL_DEFAULT);
     }
 
     draw_filled_rect(display, BUTTON_BACK.x, BUTTON_BACK.y, BUTTON_BACK.w, BUTTON_BACK.h, COLOR_BACK, 10);
-    draw_label(display, BUTTON_BACK, back_label, strlen(back_label), scale, COLOR_LABEL_ALTERNATIVE);
+    draw_label(display, BUTTON_BACK, back_label, strlen(back_label), COLOR_LABEL_ALTERNATIVE);
 }
 
 
 static void ui_draw_take_order_grid(spi_device_handle_t display) {
 
-}
-
-
-static void draw_close_table_button(spi_device_handle_t display) {
-    
 }
 
 
@@ -281,11 +319,21 @@ void ui_draw_layout(spi_device_handle_t display) {
 }
 
 
-ui_action decode_touch_main(uint16_t x, uint16_t y) {
-    if (point_in_rect(x, y, BUTTON_IGNORE))                      return UI_ACTION_IGNORE;
-    if (point_in_rect(x, y, BUTTON_COMPLETE))                    return UI_ACTION_COMPLETE;
-    if (point_in_rect(x, y, BUTTON_TAKEORDER))                   return UI_ACTION_TAKE_ORDER;
-    if (point_in_rect(x, y, BUTTON_TABLES))                      return UI_ACTION_OPEN_TABLES;
+ui_action decode_touch_main(uint16_t x, uint16_t y, task_kind kind) {
+    if (point_in_rect(x, y, BUTTON_IGNORE) && kind != MONITOR_TABLE)      return UI_ACTION_IGNORE;
+    if (point_in_rect(x, y, BUTTON_CLOSE_TABLE) && kind == MONITOR_TABLE) return UI_ACTION_CLOSE_TABLE;
+    if (point_in_rect(x, y, BUTTON_COMPLETE) && !TASK_PRESS_COMPLETE) { 
+        TASK_PRESS_COMPLETE = true;      
+        TASK_STARTED = false;
+        return UI_ACTION_COMPLETE;
+    }
+    if (point_in_rect(x, y, BUTTON_COMPLETE) && !TASK_STARTED) {     
+        TASK_STARTED = true;
+        TASK_PRESS_COMPLETE = false;
+        return UI_ACTION_START_TASK;
+    }
+    if (point_in_rect(x, y, BUTTON_TAKEORDER))                            return UI_ACTION_TAKE_ORDER;
+    if (point_in_rect(x, y, BUTTON_TABLES))                               return UI_ACTION_OPEN_TABLES;
     return UI_ACTION_NONE;
 }
 
@@ -313,7 +361,13 @@ void ui_task(void *arg) {
         ui_snapshot snap = UI_SNAPSHOT;
 
         if (UI_MODE == UI_MODE_MAIN && !task_id_equal(snap.task_id, prev_task_id)) {
-            ui_draw_layout(display.dev_handle);  // Redraw UI if displayed task changes
+            if (snap.task_kind == MONITOR_TABLE) {
+                draw_button_close_table(display.dev_handle);
+            }
+            else {
+                draw_button_ignore(display.dev_handle);
+            }
+            draw_active_task_label(display.dev_handle, snap);
             prev_task_id = snap.task_id;
         }
 
@@ -323,7 +377,7 @@ void ui_task(void *arg) {
         if (pressed && !last_touch_pressed) {
             time_ms now = get_time();
 
-            ui_action act = (UI_MODE == UI_MODE_MAIN) ? decode_touch_main(x, y)
+            ui_action act = (UI_MODE == UI_MODE_MAIN) ? decode_touch_main(x, y, snap.task_kind)
                                                      : decode_touch_grid(x, y);
 
             switch (UI_MODE) {
@@ -340,10 +394,24 @@ void ui_task(void *arg) {
                             }
                             break;
 
+                        case UI_ACTION_CLOSE_TABLE:
+                            if (snap.has_task) {
+                                system_apply_user_action_to_task(snap.task_id, USER_ACTION_CLOSE_TABLE, now);
+                            }
+                            break;
+
+                        case UI_ACTION_START_TASK:
+                            if (snap.has_task) {
+                                system_apply_user_action_to_task(snap.task_id, USER_ACTION_START_TASK, now);
+                            }
+                            draw_button_complete(display.dev_handle);
+                            break;
+
                         case UI_ACTION_COMPLETE:
                             if (snap.has_task) {
                                 system_apply_user_action_to_task(snap.task_id, USER_ACTION_COMPLETE, now);
                             }
+                            // draw_button_start(display.dev_handle);
                             break;
 
                         case UI_ACTION_TAKE_ORDER:

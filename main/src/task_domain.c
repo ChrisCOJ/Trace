@@ -6,7 +6,6 @@
 static const char *TAG = "task_domain";
 
 
-// Testing
 void task_init(task *task, task_id id, task_kind kind, time_ms created_at, uint8_t table) {
     memset(task, 0, sizeof(*task));
     task->id = id;
@@ -19,7 +18,6 @@ void task_init(task *task, task_id id, task_kind kind, time_ms created_at, uint8
     task->table_number = table;
     task->kind = kind;
 }
-// Testing
 
 
 return_status task_mark_completed(task *task) {

@@ -13,6 +13,7 @@ typedef enum {
     UI_ACTION_NONE = 0,
     UI_ACTION_IGNORE,
     UI_ACTION_COMPLETE,
+    UI_ACTION_START_TASK,
     UI_ACTION_TAKE_ORDER,
     UI_ACTION_CLOSE_TABLE,
     UI_ACTION_CLOSE_IGNORE,     // Ignore and close table button have the same coordinates and size
