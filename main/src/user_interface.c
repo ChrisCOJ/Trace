@@ -26,6 +26,7 @@ static bool last_touch_pressed = false;
 // Label colours
 static const uint16_t COLOR_LABEL_DEFAULT      = 0x0000;
 static const uint16_t COLOR_LABEL_ALTERNATIVE  = 0xFFFF;
+const uint16_t BG                              = 0x0000;
 
 static bool TASK_STARTED                 = false;
 static bool TASK_PRESS_COMPLETE          = true;
@@ -224,6 +225,9 @@ static void draw_button_ignore(spi_device_handle_t display) {
 
 
 static void draw_active_task_label(spi_device_handle_t display, ui_snapshot snap) {
+    rect task_label_rect = {.x=0, .y=50, .w=240, .h=70};
+    draw_filled_rect(display, task_label_rect.x, task_label_rect.y, task_label_rect.w, task_label_rect.h, BG, 0);
+
     if (snap.has_task) {
         const char *task_kind_label = task_kind_to_str(snap.task_kind);
         draw_label(display, (rect){.x=0,.y=60,.w=240,.h=30}, task_kind_label, strlen(task_kind_label), COLOR_LABEL_ALTERNATIVE);
@@ -240,8 +244,6 @@ static void draw_active_task_label(spi_device_handle_t display, ui_snapshot snap
 
 
 static void ui_draw_main(spi_device_handle_t display) {
-    const uint16_t BG                       = 0x0000;
-
     const uint16_t COLOR_TAKE               = 0x39E7;
     const uint16_t COLOR_TOPBAR             = 0x39E7; // grey
 
@@ -271,6 +273,19 @@ static void ui_draw_main(spi_device_handle_t display) {
 
     draw_filled_rect(display, BUTTON_TAKEORDER.x, BUTTON_TAKEORDER.y, BUTTON_TAKEORDER.w, BUTTON_TAKEORDER.h, COLOR_TAKE, 10);
     draw_label(display, BUTTON_TAKEORDER, take_order_label, strlen(take_order_label), COLOR_LABEL_ALTERNATIVE);
+
+    if (UI_SNAPSHOT.has_task) {
+        const char *task_kind_label = task_kind_to_str(UI_SNAPSHOT.task_kind);
+        draw_label(display, (rect){.x=0,.y=60,.w=240,.h=30}, task_kind_label, strlen(task_kind_label), COLOR_LABEL_ALTERNATIVE);
+
+        char task_table_label[10];
+        snprintf(task_table_label, sizeof(task_table_label), "Table %d", UI_SNAPSHOT.table_number + 1);
+        draw_label(display, (rect){.x=0,.y=70+CHAR_HEIGHT*SCALE,.w=240,.h=30}, task_table_label, strlen(task_table_label), COLOR_LABEL_ALTERNATIVE);
+    }
+    else {
+        const char *task_label = "NONE";
+        draw_label(display, (rect){.x=0,.y=70,.w=240,.h=30}, task_label, strlen(task_label), COLOR_LABEL_ALTERNATIVE);
+    }
 }
 
 
@@ -360,7 +375,7 @@ void ui_task(void *arg) {
         // Copy the snapshot once per press to avoid mixed fields
         ui_snapshot snap = UI_SNAPSHOT;
 
-        if (UI_MODE == UI_MODE_MAIN && !task_id_equal(snap.task_id, prev_task_id)) {
+        if (UI_MODE == UI_MODE_MAIN && !task_id_equal(snap.task_id, prev_task_id) && !TASK_STARTED) {
             if (snap.task_kind == MONITOR_TABLE) {
                 draw_button_close_table(display.dev_handle);
             }
@@ -411,7 +426,7 @@ void ui_task(void *arg) {
                             if (snap.has_task) {
                                 system_apply_user_action_to_task(snap.task_id, USER_ACTION_COMPLETE, now);
                             }
-                            // draw_button_start(display.dev_handle);
+                            draw_button_start(display.dev_handle);
                             break;
 
                         case UI_ACTION_TAKE_ORDER:
