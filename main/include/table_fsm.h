@@ -57,7 +57,7 @@ typedef struct {
  * @param out_task Output task specification populated on success.
  * @return true if there is a valid and active task for the table, false otherwise.
  */
-bool get_current_task_for_table(table_context *table, task_spec *out_task);
+bool fsm_get_current_task_for_table(table_context *table, task_spec *out_task);
 
 
 /**

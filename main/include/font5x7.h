@@ -9,6 +9,7 @@
 #define CHAR_HEIGHT     7
 
 
+const uint8_t font5x7_symbols[16][5];         // ':' ',' '/' etc.
 extern const uint8_t font5x7_digits[10][5];   // '0'–'9'
 extern const uint8_t font5x7_upper[26][5];    // 'A'–'Z'
 extern const uint8_t font5x7_lower[26][5]; 

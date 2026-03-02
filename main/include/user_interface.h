@@ -6,9 +6,6 @@
 #include "../include/table_fsm.h"
 
 
-#define MAX_TABLES      28
-
-
 typedef enum {
     UI_ACTION_NONE = 0,
     UI_ACTION_IGNORE,
@@ -19,12 +16,15 @@ typedef enum {
     UI_ACTION_CLOSE_IGNORE,     // Ignore and close table button have the same coordinates and size
     UI_ACTION_OPEN_TABLES,
     UI_ACTION_BACK,
-    UI_ACTION_TABLE_TILE_0,
     UI_ACTION_TABLE_TILE_1,
     UI_ACTION_TABLE_TILE_2,
     UI_ACTION_TABLE_TILE_3,
     UI_ACTION_TABLE_TILE_4,
-    UI_ACTION_TABLE_TILE_5
+    UI_ACTION_TABLE_TILE_5,
+    UI_ACTION_TABLE_TILE_6,
+    UI_ACTION_TABLE_TILE_7,
+    UI_ACTION_TABLE_TILE_8,
+    UI_ACTION_TABLE_TILE_9,
 } ui_action;
 
 
@@ -32,7 +32,7 @@ typedef enum {
 typedef enum { 
     UI_MODE_MAIN, 
     UI_MODE_TABLE_GRID,
-    UI_MODE_TAKE_ORDER_GRID,
+    UI_MODE_TABLE_INFO,
 } ui_mode;
 
 
@@ -42,9 +42,6 @@ typedef struct {
     task_kind task_kind;
     uint8_t table_number;
 } ui_snapshot;
-
-
-extern table_context table_fsm_instances[MAX_TABLES];
 
 
 /**

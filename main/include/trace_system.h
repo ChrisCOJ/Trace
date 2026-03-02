@@ -10,7 +10,9 @@
 #include "../include/trace_scheduler.h"
 
 
-#define MAX_TABLES 28
+#define MAX_TABLES      9
+
+extern table_context table_fsm_instances[MAX_TABLES];
 
 
 /**
@@ -92,8 +94,12 @@ void trace_system_tick(time_ms current_time_ms);
 
 
 // Read-only accessors for UI
-const table_context *trace_system_get_table(uint8_t table_index);
-task_id trace_system_get_active_task_id(void);
-const task *trace_system_get_active_task(void);
+const table_context *system_get_table(uint8_t table_index);
+
+const task_id system_get_active_task_id(void);
+
+const task *system_get_active_task(void);
+
+const task_kind system_get_current_task_for_table(uint8_t table_index);
 
 #endif

@@ -68,7 +68,7 @@ bool table_apply_event(table_context *table, fsm_transition_event event, time_ms
 }
 
 
-bool get_current_task_for_table(table_context *table, task_spec *out_task) {
+bool fsm_get_current_task_for_table(table_context *table, task_spec *out_task) {
     if (!table || !out_task) return false;
 
     task_kind kind;

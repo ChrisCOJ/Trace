@@ -197,16 +197,57 @@ void trace_system_tick(time_ms current_time_ms) {
 // Read-only accessors for UI/debugging
 // ----------------------------
 
-const table_context *trace_system_get_table(uint8_t table_index) {
+const table_context *system_get_table(uint8_t table_index) {
     if (!is_valid_table_index(table_index)) return NULL;
     return &table_fsm_instances[table_index];
 }
 
-task_id trace_system_get_active_task_id(void) {
+
+const task_kind system_get_current_task_for_table(uint8_t table_index) {
+    task_kind kind;
+    const table_context *table = system_get_table(table_index);
+
+    switch (table->state){
+        case TABLE_SEATED:
+            kind = SERVE_WATER;
+            break;
+
+        case TABLE_READY_FOR_ORDER:
+            kind = TAKE_ORDER;
+            break;
+
+        case TABLE_WAITING_FOR_ORDER:
+            kind = SERVE_ORDER;
+            break;
+
+        case TABLE_DINING:
+            kind = KIND_NOT_APPLICABLE;
+
+        case TABLE_CHECKUP:
+            kind = MONITOR_TABLE;
+            break;
+
+        case TABLE_DONE:
+            kind = CLEAR_TABLE;
+            break;
+
+        case TABLE_IDLE:
+            kind = KIND_NOT_APPLICABLE;
+
+        default:
+            kind = KIND_NOT_APPLICABLE;
+    }
+
+    return kind;
+}
+
+
+const task_id system_get_active_task_id(void) {
     return task_scheduler.active_task_id;
 }
 
-const task *trace_system_get_active_task(void) {
+const task *system_get_active_task(void) {
     if (!task_scheduler.has_active_task) return NULL;
     return task_pool_get_const(&scheduler_task_pool, task_scheduler.active_task_id);
 }
+
