@@ -17,6 +17,8 @@ static scheduler task_scheduler;
 static const char *SYS_TAG = "SYS";
 
 
+const task_kind system_get_current_task_for_table(uint8_t table_index);
+
 
 static inline bool is_valid_table_index(uint8_t table_index) {
     return table_index < MAX_TABLES;
@@ -27,16 +29,14 @@ static inline bool is_valid_table_index(uint8_t table_index) {
 static void admit_task(const uint8_t table_number, time_ms current_time_ms) {
     if (!is_valid_table_index(table_number)) return;
 
-    table_context *table_instance = &table_fsm_instances[table_number];
-
-    task_spec current_task_spec;
-    if (!get_current_task_for_table(table_instance, &current_task_spec)) {
+    task_kind kind = system_get_current_task_for_table(table_number);
+    if (kind == TASK_NOT_APPLICABLE) {
         return;
     }
 
     task_pool_add(&scheduler_task_pool,
-                 current_task_spec.table_number,
-                 (task_kind)current_task_spec.task_kind,
+                 table_number,
+                 kind,
                  current_time_ms);
 }
 
@@ -203,7 +203,7 @@ const table_context *system_get_table(uint8_t table_index) {
 }
 
 
-const task_kind system_get_current_task_for_table(uint8_t table_index) {
+task_kind system_get_current_task_for_table(uint8_t table_index) {
     task_kind kind;
     const table_context *table = system_get_table(table_index);
 
@@ -221,7 +221,8 @@ const task_kind system_get_current_task_for_table(uint8_t table_index) {
             break;
 
         case TABLE_DINING:
-            kind = KIND_NOT_APPLICABLE;
+            kind = TASK_NOT_APPLICABLE;
+            break;
 
         case TABLE_CHECKUP:
             kind = MONITOR_TABLE;
@@ -232,17 +233,19 @@ const task_kind system_get_current_task_for_table(uint8_t table_index) {
             break;
 
         case TABLE_IDLE:
-            kind = KIND_NOT_APPLICABLE;
+            kind = TASK_NOT_APPLICABLE;
+            break;
 
         default:
-            kind = KIND_NOT_APPLICABLE;
+            kind = TASK_NOT_APPLICABLE;
+            break;
     }
 
     return kind;
 }
 
 
-const task_id system_get_active_task_id(void) {
+task_id system_get_active_task_id(void) {
     return task_scheduler.active_task_id;
 }
 

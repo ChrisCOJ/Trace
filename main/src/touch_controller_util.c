@@ -97,6 +97,10 @@ bool read_touch_point(uint16_t *out_x, uint16_t *out_y) {
     /* CST816S touch data block starting at 0x02 */
     uint8_t touch_data[6] = {0};
     esp_err_t read_result = touch_i2c_read_register_block(0x02, touch_data, sizeof(touch_data));
+    if (read_result != ESP_OK) {
+        // ESP_LOGW(TAG_TOUCH, "touch read failed: %s", esp_err_to_name(read_result));
+        return false;
+    }
 
     /* First byte reports number of active fingers */
     const uint8_t finger_count = touch_data[0];
@@ -105,6 +109,8 @@ bool read_touch_point(uint16_t *out_x, uint16_t *out_y) {
     /* Coordinates are 12-bit values split across high/low registers */
     const uint16_t touch_x = ((uint16_t)(touch_data[1] & 0x0F) << 8) | touch_data[2];
     const uint16_t touch_y = ((uint16_t)(touch_data[3] & 0x0F) << 8) | touch_data[4];
+
+    ESP_LOGI(TAG_TOUCH, "raw finger=%u x=%u y=%u", finger_count, touch_x, touch_y);
 
     if (touch_x >= DISPLAY_WIDTH || touch_y >= DISPLAY_HEIGHT) return false;
 

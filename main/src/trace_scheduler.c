@@ -13,7 +13,7 @@
 #define AGE_WEIGHT                  0.2f
 #define IGNORE_PENALTY_WEIGHT       1.0f
 #define PREEMPT_DELTA               0.8f
-#define MIN_DWELL_TIME_MS           20000  // 20 seconds
+#define MIN_DWELL_TIME_MS           1000  // 1 second
 
 /* --- Weight caps --- */
 #define URGENCY_CAP          10.0f
