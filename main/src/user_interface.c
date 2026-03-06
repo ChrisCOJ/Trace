@@ -44,19 +44,19 @@ typedef struct {
 
 
 /* Button layout (screen-space coordinates) */
-static const rect BUTTON_IGNORE         = { .x = 10,  .y = 200,  .w = 220, .h = 60 };
-static const rect BUTTON_CLOSE_TABLE    = { .x = 10,  .y = 200,  .w = 100, .h = 60 };
+static const rect BUTTON_IGNORE         = { .x = 10,  .y = 215,  .w = 220, .h = 60 };
+static const rect BUTTON_CLOSE_TABLE    = { .x = 10,  .y = 215,  .w = 100, .h = 60 };
 
-static const rect BUTTON_START          = { .x = 10,  .y = 130, .w = 220, .h = 60 };
-static const rect BUTTON_COMPLETE       = { .x = 10,  .y = 130, .w = 220, .h = 60 };
+static const rect BUTTON_START          = { .x = 10,  .y = 140, .w = 220, .h = 60 };
+static const rect BUTTON_COMPLETE       = { .x = 10,  .y = 140, .w = 220, .h = 60 };
 
-static const rect BUTTON_TAKEORDER      = { .x = 130, .y = 200,  .w = 100, .h = 60 };
+static const rect BUTTON_TAKEORDER      = { .x = 130, .y = 215,  .w = 100, .h = 60 };
 
-static const rect TABLE_INFO_TAKE_ORDER_BTN = { .x = 10,  .y = 150, .w = 220, .h = 50 };
-static const rect TABLE_INFO_BACK_BTN       = { .x = 10,  .y = 210,  .w = 220, .h = 50 };
+static const rect TABLE_INFO_TAKE_ORDER_BTN = { .x = 10, .y = 160, .w = 220, .h = 50 };
+static const rect TABLE_INFO_BACK_BTN       = { .x = 10, .y = 225, .w = 220, .h = 50 };
 
 /* Top bar button to open table grid */
-static const rect BUTTON_TABLES   = { .x=10,  .y=10,   .w=220, .h=30 };
+static const rect BUTTON_TABLES   = { .x=10, .y=0, .w=220, .h=30 };
 
 /* GRID screen: 9 table tiles (3 cols x 3 rows) */
 static const rect TABLE_TILE[9] = {
@@ -66,14 +66,16 @@ static const rect TABLE_TILE[9] = {
 };
 
 /* Back button on grid screen */
-static const rect BUTTON_BACK     = { .x=10,  .y=245, .w=220, .h=30 };
+static const rect BUTTON_BACK     = { .x=0, .y=245, .w=240, .h=35 };
 
 
 /* Basic point-in-rectangle test */
 static inline bool point_in_rect(uint16_t x, uint16_t y, rect region)
 {
-    return (x >= region.x) && (x < (uint16_t)(region.x + region.w)) &&
-           (y >= region.y) && (y < (uint16_t)(region.y + region.h));
+    uint8_t x_padding = 10;
+    uint8_t y_padding = 5;
+    return (x >= region.x - x_padding) && (x < (uint16_t)(region.x + region.w + x_padding)) &&
+           (y >= region.y - y_padding) && (y < (uint16_t)(region.y + region.h + y_padding));
 }
 
 
@@ -334,7 +336,7 @@ static void ui_draw_grid(spi_device_handle_t display) {
         draw_label(display, TABLE_TILE[table_index], table_label, strlen(table_label), COLOR_LABEL_DEFAULT, false);
     }
 
-    draw_filled_rect(display, BUTTON_BACK.x, BUTTON_BACK.y, BUTTON_BACK.w, BUTTON_BACK.h, COLOR_BACK, 10);
+    draw_filled_rect(display, BUTTON_BACK.x, BUTTON_BACK.y, BUTTON_BACK.w, BUTTON_BACK.h, COLOR_BACK, 0);
     draw_label(display, BUTTON_BACK, back_label, strlen(back_label), COLOR_LABEL_ALTERNATIVE, false);
 }
 
@@ -465,7 +467,6 @@ void ui_task(void *arg) {
         uint16_t x = 0, y = 0;
         bool pressed = read_touch_point(&x, &y);
 
-        // if (pressed && !last_touch_pressed) 
         if (pressed) {
             time_ms now = get_time();
 

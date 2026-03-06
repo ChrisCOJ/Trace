@@ -8,6 +8,14 @@
 
 #define SNOOZE_DURATION     30000       // Amount of time a task will be supressed when ignored in ms (30 seconds)
 
+#define TEST_MODE       // Remove once testing is done
+
+#ifdef TEST_MODE
+#define TIME_SCALE 1000  // 1 second
+#else
+#define TIME_SCALE (60 * 1000)  // 1 minute
+#endif
+
 /* --------------- TASK PROPERTIES --------------- */
 typedef enum {
     SERVE_WATER = 0,
@@ -21,19 +29,19 @@ typedef enum {
 // Task base priorities
 static const float TASK_BASE_PRIORITY[5] = {
     [SERVE_WATER]   = 3.0f,
-    [TAKE_ORDER]    = 4.0f,
-    [SERVE_ORDER]   = 5.0f,
+    [TAKE_ORDER]    = 5.0f,
+    [SERVE_ORDER]   = 7.0f,
     [MONITOR_TABLE] = 2.0f,
     [CLEAR_TABLE]   = 1.0f,
 };
 
 // Task time limits
 static const time_ms TASK_TIME_LIMIT[5] = {
-    [SERVE_WATER]   = 5 * 60 * 1000,
-    [TAKE_ORDER]    = 10 * 60 * 1000,
-    [SERVE_ORDER]   = 5 * 60 * 1000,
-    [MONITOR_TABLE] = 15 * 60 * 1000,
-    [CLEAR_TABLE]   = 10 * 60 * 1000,
+    [SERVE_WATER]   = 5 * TIME_SCALE,
+    [TAKE_ORDER]    = 10 * TIME_SCALE,
+    [SERVE_ORDER]   = 5 * TIME_SCALE,
+    [MONITOR_TABLE] = 15 * TIME_SCALE,
+    [CLEAR_TABLE]   = 10 * TIME_SCALE,
 };
 /* --------------- --------------- --------------- */
 
