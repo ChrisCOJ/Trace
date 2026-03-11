@@ -8,7 +8,8 @@
 
 #define SNOOZE_DURATION     30000       // Amount of time a task will be supressed when ignored in ms (30 seconds)
 
-#define TEST_MODE       // Remove once testing is done
+// #define TEST_MODE       // Remove once testing is done
+
 
 #ifdef TEST_MODE
 #define TIME_SCALE 1000  // 1 second
@@ -66,6 +67,9 @@ typedef struct {
     uint16_t index;
     uint16_t generation;
 } task_id;
+
+
+extern task_id INVALID_TASK_ID;
 
 
 typedef struct {

@@ -9,6 +9,7 @@
 #include "esp_timer.h"
 #include "driver/i2c.h"
 #include "driver/gpio.h"
+#include "esp_err.h"
 
 #include "../include/display_util.h"
 #include "../include/trace_system.h"
@@ -16,6 +17,11 @@
 #include "../include/trace_scheduler.h"
 #include "../include/user_interface.h"
 #include "../include/touch_controller_util.h"
+#include "../include/haptic_driver.h"
+
+
+#define SYS_EN_GPIO 41
+#define TAG         "main"
 
 
 void scheduler_tick_task(void *arg) {
@@ -35,6 +41,22 @@ void app_main(void) {
     esp_log_level_set("ui", ESP_LOG_INFO);
     esp_log_level_set("touch", ESP_LOG_WARN);
 
+    gpio_config_t io = {
+        .pin_bit_mask = 1ULL << SYS_EN_GPIO,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&io);
+    gpio_set_level(SYS_EN_GPIO, 1);
+
+    // Init the haptic driver
+    esp_err_t err_no =  drv2605l_init();
+    ESP_LOGW(TAG, "%d", err_no);
+    ESP_LOGI(TAG, "DRV2605L init done");
+    drv2605l_play_effect(52);
+
     /* Core scheduler setup */
     scheduler_config system_config = {0};
     trace_system_init(&system_config);
@@ -42,10 +64,6 @@ void app_main(void) {
     /* Display and UI */
     display_spi_ctx display_context = display_init();
     ui_draw_layout(display_context.dev_handle);
-
-    // /* Seed test table */
-    // time_ms current_time = get_time();
-    // system_apply_table_fsm_event(0, EVENT_CUSTOMERS_SEATED, current_time);
 
     /* Runtime tasks */
     xTaskCreate(ui_task, "ui_task", 4096, &display_context, 5, NULL);

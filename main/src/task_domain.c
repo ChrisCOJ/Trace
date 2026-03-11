@@ -5,6 +5,8 @@
 
 static const char *TAG = "task_domain";
 
+extern task_id INVALID_TASK_ID = { .index = UINT16_MAX, .generation = 0 };
+
 
 void task_init(task *task, task_id id, task_kind kind, time_ms created_at, uint8_t table) {
     memset(task, 0, sizeof(*task));
@@ -64,20 +66,6 @@ return_status refresh_task(task *task, time_ms current_time) {
 
     return SUCCESS;
 }
-
-
-// task_status is_task_schedulable(const task *task, time_ms current_time) {
-//     if (!task) return false;
-
-//     if (task->status == TASK_KILLED) return false;
-//     if (task->status == TASK_COMPLETED) return false;
-
-//     if (task->status == TASK_SUPPRESSED) {
-//         return current_time >= task->suppress_until;
-//     }
-
-//     return task->status == TASK_ELIGIBLE;
-// }
 
 
 return_status kill_task(task *task) {

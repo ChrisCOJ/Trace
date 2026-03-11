@@ -100,6 +100,8 @@ task_id system_get_active_task_id(void);
 
 const task *system_get_active_task(void);
 
-task_kind system_get_current_task_for_table(uint8_t table_index);
+task *system_get_current_task_pointer_for_table(uint8_t table_index);
+
+task_kind system_get_current_task_kind_for_table(uint8_t table_index);
 
 #endif

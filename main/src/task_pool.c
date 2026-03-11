@@ -3,6 +3,8 @@
 #include <string.h>
 
 
+extern task_id INVALID_TASK_ID;
+
 
 bool is_task_id_valid(task_id id) {
     return id.index < TASK_POOL_CAPACITY;
@@ -82,14 +84,8 @@ const task *task_pool_get_const(const task_pool *pool, task_id id) {
 }
 
 
-static inline task_id invalid_task_id(void) {
-    task_id id = { .index = UINT16_MAX, .generation = 0 };
-    return id;
-}
-
-
 task_id task_pool_find_by_key(const task_pool *pool, uint8_t table_number, task_kind kind) {
-    if (!pool) return invalid_task_id();
+    if (!pool) return INVALID_TASK_ID;
 
     for (uint16_t i = 0; i < TASK_POOL_CAPACITY; ++i) {
         const task_slot *slot = &pool->slots[i];
@@ -105,12 +101,12 @@ task_id task_pool_find_by_key(const task_pool *pool, uint8_t table_number, task_
             return id;
         }
     }
-    return invalid_task_id();
+    return INVALID_TASK_ID;
 }
 
 
 task_id task_pool_add(task_pool *pool, uint8_t table_number, task_kind kind, time_ms now) {
-    if (!pool) return invalid_task_id();
+    if (!pool) return INVALID_TASK_ID;
 
     // If a relevant task already exists, update it and return it.
     task_id existing = task_pool_find_by_key(pool, table_number, kind);
@@ -144,7 +140,7 @@ task_id task_pool_add(task_pool *pool, uint8_t table_number, task_kind kind, tim
     if (id.index == UINT16_MAX) return id;
 
     task *task = task_pool_get(pool, id);
-    if (!task) return invalid_task_id();
+    if (!task) return INVALID_TASK_ID;
 
     task_init(task, id,
               kind,

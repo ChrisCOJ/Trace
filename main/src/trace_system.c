@@ -17,7 +17,7 @@ static scheduler task_scheduler;
 static const char *SYS_TAG = "SYS";
 
 
-const task_kind system_get_current_task_for_table(uint8_t table_index);
+task_kind system_get_current_task_kind_for_table(uint8_t table_index);
 
 
 static inline bool is_valid_table_index(uint8_t table_index) {
@@ -29,7 +29,7 @@ static inline bool is_valid_table_index(uint8_t table_index) {
 static void admit_task(const uint8_t table_number, time_ms current_time_ms) {
     if (!is_valid_table_index(table_number)) return;
 
-    task_kind kind = system_get_current_task_for_table(table_number);
+    task_kind kind = system_get_current_task_kind_for_table(table_number);
     if (kind == TASK_NOT_APPLICABLE) {
         return;
     }
@@ -88,18 +88,26 @@ void system_apply_table_fsm_event(uint8_t table_index, fsm_transition_event even
 
 
 void system_take_order_now(uint8_t table_index, time_ms current_time_ms) {
-    system_apply_table_fsm_event(table_index, EVENT_TAKE_ORDER_EARLY_OR_REPEAT, current_time_ms);
+    if (!is_valid_table_index(table_index)) return;
+
+    table_context *table = &table_fsm_instances[table_index];
+    // Kill current task before moving to Take Order
+    task *t = system_get_current_task_pointer_for_table(table_index);
+    if (!t) {
+        ESP_LOGE(SYS_TAG, "NULL task pointer returned in system_take_order_now(). Given table may not have an active task or an error occured.");
+        return;
+    }
+    kill_task(t);
+    fsm_force_take_order(table, current_time_ms);
+
+    admit_task(table_index, current_time_ms);
+    scheduler_tick(&task_scheduler, &scheduler_task_pool, current_time_ms);
 }
 
 
 void system_close_table(uint8_t table_index, time_ms current_time_ms) {
     system_apply_table_fsm_event(table_index, EVENT_TABLE_CLOSED, current_time_ms);
 }
-
-
-// void system_mark_task_completed(uint8_t table_index, time_ms current_time_ms) {
-//     system_apply_table_fsm_event(table_index, EVENT_MARK_COMPLETE, current_time_ms);
-// }
 
 
 bool system_apply_user_action_to_task(task_id shown_task_id, user_action action, time_ms current_time_ms) {
@@ -203,7 +211,20 @@ const table_context *system_get_table(uint8_t table_index) {
 }
 
 
-task_kind system_get_current_task_for_table(uint8_t table_index) {
+task *system_get_current_task_pointer_for_table(uint8_t table_index) {
+    task_kind kind = system_get_current_task_kind_for_table(table_index);
+
+    task_id id = task_pool_find_by_key(&scheduler_task_pool, table_index, kind);
+    if (id.index == INVALID_TASK_ID.index && id.generation == INVALID_TASK_ID.generation) return NULL;
+
+    task *t = task_pool_get(&scheduler_task_pool, id);
+    if (!t) return NULL;
+
+    return t;
+}
+
+
+task_kind system_get_current_task_kind_for_table(uint8_t table_index) {
     task_kind kind;
     const table_context *table = system_get_table(table_index);
 

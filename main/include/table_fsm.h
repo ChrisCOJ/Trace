@@ -44,6 +44,9 @@ typedef struct {
 
 
 
+void fsm_force_take_order(table_context *table, time_ms current_time);
+
+
 /**
  * Derive the current task specification for a table based on its state.
  *
