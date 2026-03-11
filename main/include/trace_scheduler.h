@@ -16,7 +16,7 @@ typedef enum {
     USER_ACTION_START_TASK,
     USER_ACTION_IGNORE,
     USER_ACTION_TAKE_ORDER,
-    USER_ACTION_CLOSE_TABLE,
+    USER_ACTION_BILL,
 } user_action;
 
 

@@ -13,6 +13,11 @@ void fsm_force_take_order(table_context *table, time_ms current_time) {
 }
 
 
+void fsm_force_bill_requested(table_context *table, time_ms current_time) {
+    enter_state(table, TABLE_REQUESTED_BILL, current_time);
+}
+
+
 bool table_apply_event(table_context *table, fsm_transition_event event, time_ms current_time) {
     table_state prev = table->state;
 
@@ -31,6 +36,12 @@ bool table_apply_event(table_context *table, fsm_transition_event event, time_ms
 
         case TABLE_READY_FOR_ORDER:
             if (event == EVENT_MARK_COMPLETE) {
+                enter_state(table, TABLE_PLACED_ORDER, current_time);
+            }
+            break;
+
+        case TABLE_PLACED_ORDER:
+            if (event == EVENT_MARK_COMPLETE) {
                 enter_state(table, TABLE_WAITING_FOR_ORDER, current_time);
             }
             break;
@@ -45,8 +56,11 @@ bool table_apply_event(table_context *table, fsm_transition_event event, time_ms
             if (event == TIMEOUT_PERIODIC_CHECKIN) {
                 enter_state(table, TABLE_CHECKUP, current_time);
             }
-            if (event == EVENT_TAKE_ORDER_EARLY_OR_REPEAT) {
+            else if (event == EVENT_TAKE_ORDER_EARLY_OR_REPEAT) {
                 enter_state(table, TABLE_READY_FOR_ORDER, current_time);
+            }
+            else if (event == EVENT_TABLE_REQUESTED_BILL) {
+                enter_state(table, TABLE_REQUESTED_BILL, current_time);
             }
             break;
 
@@ -54,10 +68,16 @@ bool table_apply_event(table_context *table, fsm_transition_event event, time_ms
             if (event == EVENT_TAKE_ORDER_EARLY_OR_REPEAT) {
                 enter_state(table, TABLE_READY_FOR_ORDER, current_time);
             }
-            if (event == EVENT_MARK_COMPLETE) {
+            else if (event == EVENT_MARK_COMPLETE) {
                 enter_state(table, TABLE_DINING, current_time);
             }
-            if (event == EVENT_TABLE_CLOSED) {
+            else if (event == EVENT_TABLE_REQUESTED_BILL) {
+                enter_state(table, TABLE_REQUESTED_BILL, current_time);
+            }
+            break;
+        
+        case TABLE_REQUESTED_BILL:
+            if (event == EVENT_MARK_COMPLETE) {
                 enter_state(table, TABLE_DONE, current_time);
             }
             break;
@@ -87,6 +107,10 @@ bool fsm_get_current_task_for_table(table_context *table, task_spec *out_task) {
             kind = TAKE_ORDER;
             break;
 
+        case TABLE_PLACED_ORDER:
+            kind = PREPARE_ORDER;
+            break;
+
         case TABLE_WAITING_FOR_ORDER:
             kind = SERVE_ORDER;
             break;
@@ -96,6 +120,10 @@ bool fsm_get_current_task_for_table(table_context *table, task_spec *out_task) {
 
         case TABLE_CHECKUP:
             kind = MONITOR_TABLE;
+            break;
+
+        case TABLE_REQUESTED_BILL:
+            kind = PRESENT_BILL;
             break;
 
         case TABLE_DONE:
@@ -116,8 +144,9 @@ bool fsm_get_current_task_for_table(table_context *table, task_spec *out_task) {
 
 
 void table_fsm_tick(table_context *table, time_ms current_time) {
+    if (!table) return;
+
     time_ms dt = current_time - table->state_entered_at;
-    if (dt < 0) dt = 0;
 
     switch (table->state) {
         case TABLE_DINING:

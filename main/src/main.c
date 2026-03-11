@@ -18,6 +18,7 @@
 #include "../include/user_interface.h"
 #include "../include/touch_controller_util.h"
 #include "../include/haptic_driver.h"
+#include "../include/battery_monitor.h"
 
 
 #define SYS_EN_GPIO 41
@@ -55,11 +56,13 @@ void app_main(void) {
     esp_err_t err_no =  drv2605l_init();
     ESP_LOGW(TAG, "%d", err_no);
     ESP_LOGI(TAG, "DRV2605L init done");
-    drv2605l_play_effect(52);
-
+    
     /* Core scheduler setup */
     scheduler_config system_config = {0};
     trace_system_init(&system_config);
+
+    /* Battery monitor */
+    battery_monitor_init();
 
     /* Display and UI */
     display_spi_ctx display_context = display_init();

@@ -9,6 +9,7 @@
 #include "../include/touch_controller_util.h"
 #include "../include/font5x7.h"
 #include "../include/haptic_driver.h"
+#include "../include/battery_monitor.h"
 
 #include "driver/spi_master.h"
 #include <math.h>
@@ -23,10 +24,12 @@ enum {
     UI_MARGIN_X = 10,
     UI_SMALL_GAP = 5,
     UI_MEDIUM_GAP = 10,
-    UI_LARGE_GAP = 15,
+    UI_LARGE_GAP = 20,
 
     UI_TOPBAR_Y = 0,
     UI_TOPBAR_H = 30,
+    UI_TOPBAR_X = 60,
+    UI_TOPBAR_W = 120,
 
     UI_ACTION_BTN_Y = 140,
     UI_BOTTOM_BTN_Y = 215,
@@ -44,9 +47,11 @@ enum {
     UI_TILE_START_X = 10,
     UI_TILE_START_Y = 35,
 
-    UI_TABLE_INFO_BTN_W = 220,
     UI_TABLE_INFO_BTN_H = 50,
     UI_TABLE_INFO_TAKE_ORDER_Y = 160,
+    UI_TABLE_INFO_TAKE_ORDER_W = UI_HALF_BTN_W,
+    UI_TABLE_INFO_BILL_Y = 160,
+    UI_TABLE_INFO_BILL_W = UI_HALF_BTN_W,
     UI_TABLE_INFO_BACK_Y = 225,
 
     UI_TOUCH_PAD_X = 10,
@@ -55,7 +60,23 @@ enum {
     UI_CORNER_RADIUS = 10,
     UI_TEXT_VERTICAL_SPACING = 7,
 
-    UI_NO_TABLE_SELECTED = 0xFF
+    UI_NO_TABLE_SELECTED = 0xFF,
+
+    // Sleep gesture: top-right corner zone (x >= MIN_X, y <= MAX_Y)
+    UI_SLEEP_CORNER_MIN_X = 195,
+    UI_SLEEP_CORNER_MAX_Y = 40,
+    UI_SLEEP_HOLD_MS      = 1000,
+    UI_INACTIVITY_SLEEP_MS = 30000,
+
+    // Battery icon (top-right corner)
+    UI_BATT_X       = 195,
+    UI_BATT_Y       = 8,
+    UI_BATT_W       = 30,
+    UI_BATT_H       = 16,
+    UI_BATT_TIP_W   = 3,
+    UI_BATT_TIP_H   = 7,
+    UI_BATT_BORDER  = 2,
+    UI_BATT_BARS    = 4,
 } UI_DIMENSION_CONSTANTS;
 
 
@@ -147,7 +168,7 @@ static const rect MAIN_IGNORE_BTN = {
     .w = UI_FULL_BTN_W,
     .h = UI_BTN_H
 };
-static const rect MAIN_CLOSE_TABLE_BTN = { 
+static const rect MAIN_BILL_BTN = { 
     .x = UI_MARGIN_X,
     .y = UI_BOTTOM_BTN_Y,
     .w = UI_HALF_BTN_W,
@@ -176,14 +197,29 @@ static const rect MAIN_TAKEORDER_BTN = {
 
 /* Top bar button to open table grid */
 static const rect MAIN_TABLES_BTN = {
-    .x = UI_MARGIN_X,
+    .x = UI_TOPBAR_X,
     .y = UI_TOPBAR_Y,
-    .w = UI_FULL_BTN_W,
+    .w = UI_TOPBAR_W,
     .h = UI_TOPBAR_H
 };
 
-static const rect TABLE_INFO_TAKE_ORDER_BTN = { .x = 10, .y = 160, .w = 220, .h = 50 };
-static const rect TABLE_INFO_BACK_BTN       = { .x = 10, .y = 225, .w = 220, .h = 50 };
+static const rect TABLE_INFO_TAKE_ORDER_BTN = { 
+    .x = UI_MARGIN_X, 
+    .y = UI_TABLE_INFO_TAKE_ORDER_Y, 
+    .w = UI_HALF_BTN_W, 
+    .h = UI_TABLE_INFO_BTN_H };
+
+static const rect TABLE_INFO_BILL_BTN = { 
+    .x = UI_MARGIN_X + UI_TABLE_INFO_TAKE_ORDER_W + UI_LARGE_GAP, 
+    .y = UI_TABLE_INFO_BILL_Y, 
+    .w = UI_HALF_BTN_W, 
+    .h = UI_TABLE_INFO_BTN_H };
+
+static const rect TABLE_INFO_BACK_BTN = { 
+    .x = UI_MARGIN_X, 
+    .y = UI_TABLE_INFO_BACK_Y, 
+    .w = UI_FULL_BTN_W, 
+    .h = UI_TABLE_INFO_BTN_H };
 
 /* Back button on grid screen */
 static const rect TABLE_GRID_BACK_BTN = {
@@ -196,6 +232,32 @@ static const rect TABLE_GRID_BACK_BTN = {
 
 
 /* --------------------------- Internal functions --------------------------- */
+
+static const char *table_state_to_str(table_state state) {
+    switch (state) {
+        case TABLE_SEATED:            return "Seated";
+        case TABLE_READY_FOR_ORDER:   return "Ready to Order";
+        case TABLE_PLACED_ORDER:      return "Placed Order";
+        case TABLE_WAITING_FOR_ORDER: return "Waiting";
+        case TABLE_DINING:            return "Dining";
+        case TABLE_CHECKUP:           return "Check-up";
+        case TABLE_REQUESTED_BILL:    return "Bill Requested";
+        case TABLE_DONE:              return "Done";
+        default:                      return "Unknown";
+    }
+}
+
+static void format_elapsed(time_ms elapsed_ms, char *buf, size_t len) {
+    uint32_t total_s = elapsed_ms / 1000;
+    uint32_t m = total_s / 60;
+    uint32_t s = total_s % 60;
+    if (m > 0) {
+        snprintf(buf, len, "%um %02us", (unsigned)m, (unsigned)s);
+    } else {
+        snprintf(buf, len, "%us", (unsigned)s);
+    }
+}
+
 /* Basic point-in-rectangle test */
 static inline bool point_in_rect(uint16_t x, uint16_t y, rect region)
 {
@@ -334,8 +396,37 @@ static void draw_filled_rect(spi_device_handle_t display,
 }
 
 
+static void draw_battery_icon(spi_device_handle_t display, uint8_t bars) {
+    // Body outline
+    draw_filled_rect(display, UI_BATT_X, UI_BATT_Y, UI_BATT_W, UI_BATT_H, WHITE, 3);
+    // Tip (centred vertically on the body)
+    uint16_t tip_y = UI_BATT_Y + (UI_BATT_H - UI_BATT_TIP_H) / 2;
+    draw_filled_rect(display, UI_BATT_X + UI_BATT_W, tip_y, UI_BATT_TIP_W, UI_BATT_TIP_H, WHITE, 0);
+    // Clear interior
+    draw_filled_rect(display,
+        UI_BATT_X + UI_BATT_BORDER, UI_BATT_Y + UI_BATT_BORDER,
+        UI_BATT_W - 2 * UI_BATT_BORDER, UI_BATT_H - 2 * UI_BATT_BORDER, BLACK, 1);
+
+    if (bars == 0) return;
+
+    // Bar area: 1px padding inside the cleared interior
+    // 4 bars × 6px + 3 gaps × 2px = 30px total
+    uint16_t bar_x0 = UI_BATT_X + UI_BATT_BORDER + 1;
+    uint16_t bar_y  = UI_BATT_Y + UI_BATT_BORDER + 1;
+    uint16_t bar_h  = UI_BATT_H - 2 * UI_BATT_BORDER - 2;
+    uint16_t bar_stride  = (UI_BATT_W - UI_BATT_BORDER * 2) / UI_BATT_BARS;
+    uint16_t bar_w = bar_stride - 2;  // bar_stride - 2px gap
+
+    // uint16_t bar_color = (bars >= 3) ? GREEN : (bars == 2) ? YELLOW : RED;
+    uint16_t bar_color = (bars <= 1) ? RED : WHITE;
+    for (uint8_t i = 0; i < bars && i < UI_BATT_BARS; i++) {
+        draw_filled_rect(display, bar_x0 + i * bar_stride, bar_y, bar_stride, bar_h, bar_color, 0);
+    }
+}
+
+
 static void draw_button_complete(spi_device_handle_t display) {
-    const uint16_t COLOR_COMP = 0x07E0; // green
+    const uint16_t COLOR_COMP = GREEN;
     const char *complete_label = "Complete";
 
     draw_filled_rect(display, MAIN_COMPLETE_BTN.x, MAIN_COMPLETE_BTN.y, MAIN_COMPLETE_BTN.w, MAIN_COMPLETE_BTN.h, COLOR_COMP, 10);
@@ -344,7 +435,7 @@ static void draw_button_complete(spi_device_handle_t display) {
 
 
 static void draw_button_start(spi_device_handle_t display) {
-    const uint16_t COLOR_START = 0x07E0;
+    const uint16_t COLOR_START = GREEN;
     const char *start_label = "Start";
 
     draw_filled_rect(display, MAIN_START_BTN.x, MAIN_START_BTN.y, MAIN_START_BTN.w, MAIN_START_BTN.h, COLOR_START, 10);
@@ -352,17 +443,17 @@ static void draw_button_start(spi_device_handle_t display) {
 }
 
 
-static void draw_button_close_table(spi_device_handle_t display) {
-    const uint16_t COLOR_CLOSE = 0xF800; // red
-    const char *close_table = "Close Table";
+static void draw_button_bill(spi_device_handle_t display) {
+    const uint16_t COLOR_BILL = YELLOW;
+    const char *bill_label = "Bill";
 
-    draw_filled_rect(display, MAIN_CLOSE_TABLE_BTN.x, MAIN_CLOSE_TABLE_BTN.y, MAIN_CLOSE_TABLE_BTN.w, MAIN_CLOSE_TABLE_BTN.h, COLOR_CLOSE, 10);
-    draw_label(display, MAIN_CLOSE_TABLE_BTN, close_table, strlen(close_table), COLOR_LABEL_ALTERNATIVE, false);
+    draw_filled_rect(display, MAIN_BILL_BTN.x, MAIN_BILL_BTN.y, MAIN_BILL_BTN.w, MAIN_BILL_BTN.h, COLOR_BILL, 10);
+    draw_label(display, MAIN_BILL_BTN, bill_label, strlen(bill_label), COLOR_LABEL_ALTERNATIVE, false);
 }
 
 
 static void draw_button_ignore(spi_device_handle_t display) {
-    const uint16_t COLOR_IGNORE = 0x39E7; // grey
+    const uint16_t COLOR_IGNORE = GREY;
     const char *ignore_label = "Ignore";
 
     draw_filled_rect(display, MAIN_IGNORE_BTN.x, MAIN_IGNORE_BTN.y, MAIN_IGNORE_BTN.w, MAIN_IGNORE_BTN.h, COLOR_IGNORE, 10);
@@ -371,7 +462,7 @@ static void draw_button_ignore(spi_device_handle_t display) {
 
 
 static void draw_button_take_order(spi_device_handle_t display) {
-    const uint16_t COLOR_TAKE_ORDER = 0x39E7; // grey
+    const uint16_t COLOR_TAKE_ORDER = GREY;
     const char *take_order_label = "Take Order";
 
     draw_filled_rect(display, MAIN_TAKEORDER_BTN.x, MAIN_TAKEORDER_BTN.y, MAIN_TAKEORDER_BTN.w, MAIN_TAKEORDER_BTN.h, COLOR_TAKE_ORDER, 10);
@@ -382,11 +473,11 @@ static void draw_button_take_order(spi_device_handle_t display) {
 static void draw_bottom_button_layout(spi_device_handle_t display_handle, bool monitor) {
     // Clear previous buttons in the draw area
     rect bg_clear_rect = { .x = 0,  .y = 215,  .w = 240, .h = 60 };
-    draw_filled_rect(display_handle, bg_clear_rect.x, bg_clear_rect.y, bg_clear_rect.w, bg_clear_rect.h, 0x0000, 0);
+    draw_filled_rect(display_handle, bg_clear_rect.x, bg_clear_rect.y, bg_clear_rect.w, bg_clear_rect.h, BLACK, 0);
 
     if (monitor) {
         // Draw new buttons specific to MONITOR TABLE state
-        draw_button_close_table(display_handle);
+        draw_button_bill(display_handle);
         draw_button_take_order(display_handle);
     }
     else {
@@ -416,7 +507,7 @@ static void draw_active_task_label(spi_device_handle_t display, ui_snapshot snap
 
 
 static void ui_draw_main(spi_device_handle_t display) {
-    const uint16_t COLOR_TOPBAR             = 0x39E7; // grey
+    const uint16_t COLOR_TOPBAR = GREY;
     const char *tables_label = "Tables";
 
     display_fill(display, BG);
@@ -425,16 +516,6 @@ static void ui_draw_main(spi_device_handle_t display) {
     draw_filled_rect(display, MAIN_TABLES_BTN.x, MAIN_TABLES_BTN.y, MAIN_TABLES_BTN.w, MAIN_TABLES_BTN.h, COLOR_TOPBAR, 10);
     draw_label(display, MAIN_TABLES_BTN, tables_label, strlen(tables_label), COLOR_LABEL_ALTERNATIVE, false);
 
-    // buttons
-    draw_bottom_button_layout(display, UI_SNAPSHOT.task_kind == MONITOR_TABLE);
-
-    if (UI_TASK_STATE == UI_TASK_STATE_READY) {
-        draw_button_start(display);
-    }
-    else if (UI_TASK_STATE == UI_TASK_STATE_IN_PROGRESS) {
-        draw_button_complete(display);
-    }
-
     if (UI_SNAPSHOT.has_task) {
         const char *task_kind_label = task_kind_to_str(UI_SNAPSHOT.task_kind);
         draw_label(display, (rect){.x=0,.y=60,.w=240,.h=30}, task_kind_label, strlen(task_kind_label), COLOR_LABEL_ALTERNATIVE, false);
@@ -442,11 +523,23 @@ static void ui_draw_main(spi_device_handle_t display) {
         char task_table_label[10];
         snprintf(task_table_label, sizeof(task_table_label), "Table %d", UI_SNAPSHOT.table_number + 1);
         draw_label(display, (rect){.x=0,.y=70+CHAR_HEIGHT*UI_TEXT_SCALE,.w=240,.h=30}, task_table_label, strlen(task_table_label), COLOR_LABEL_ALTERNATIVE, false);
+
+        // buttons
+        if (UI_TASK_STATE == UI_TASK_STATE_READY) {
+            draw_button_start(display);
+        }
+        else if (UI_TASK_STATE == UI_TASK_STATE_IN_PROGRESS) {
+            draw_button_complete(display);
+        }
+        
+        draw_bottom_button_layout(display, UI_SNAPSHOT.task_kind == MONITOR_TABLE);
     }
     else {
         const char *task_label = "NONE";
         draw_label(display, (rect){.x=0,.y=70,.w=240,.h=30}, task_label, strlen(task_label), COLOR_LABEL_ALTERNATIVE, false);
     }
+
+    draw_battery_icon(display, battery_monitor_get_bars());
 }
 
 
@@ -490,11 +583,13 @@ static void ui_draw_grid(spi_device_handle_t display) {
 
     draw_filled_rect(display, TABLE_GRID_BACK_BTN.x, TABLE_GRID_BACK_BTN.y, TABLE_GRID_BACK_BTN.w, TABLE_GRID_BACK_BTN.h, LIGHT_GREY, 0);
     draw_label(display, TABLE_GRID_BACK_BTN, back_label, strlen(back_label), COLOR_LABEL_ALTERNATIVE, false);
+
+    draw_battery_icon(display, battery_monitor_get_bars());
 }
 
 
 static void draw_active_table_page(spi_device_handle_t display_handle, uint8_t table_index) {
-    const uint16_t color_table_number = 0xFFE0; // yellow
+    const uint16_t color_table_number = YELLOW;
 
     // Clear screen
     display_fill(display_handle, BG);
@@ -521,15 +616,26 @@ static void draw_active_table_page(spi_device_handle_t display_handle, uint8_t t
     }
     draw_label(display_handle, current_task_label_rect, current_task_label, strlen(current_task_label), COLOR_LABEL_ALTERNATIVE, true);
 
-    // Draw hour:min since the last task has ended
-    const rect last_task_completed_rect = {.x=10, .y=80, .w=160, .h=10};
-    const char *last_task_completed_label = "Last task:";
-    draw_label(display_handle, last_task_completed_rect, last_task_completed_label, strlen(last_task_completed_label), COLOR_LABEL_ALTERNATIVE, true);
+    // Draw current FSM stage
+    const table_context *tbl = system_get_table(table_index);
+    time_ms now = get_time();
 
-    // Draw hour:min of fsm start
-    const rect service_initiated_rect = {.x=10, .y=110, .w=180, .h=10};
-    const char *service_initiated_label = "Active since:";
-    draw_label(display_handle, service_initiated_rect, service_initiated_label, strlen(service_initiated_label), COLOR_LABEL_ALTERNATIVE, true);
+    char stage_label[32];
+    snprintf(stage_label, sizeof(stage_label), "Stage: %s", tbl ? table_state_to_str(tbl->state) : "?");
+    const rect stage_rect = {.x=10, .y=80, .w=220, .h=10};
+    draw_label(display_handle, stage_rect, stage_label, strlen(stage_label), COLOR_LABEL_ALTERNATIVE, true);
+
+    // Draw time spent in current stage
+    char stage_time_label[32];
+    if (tbl) {
+        char elapsed_str[16];
+        format_elapsed(now - tbl->state_entered_at, elapsed_str, sizeof(elapsed_str));
+        snprintf(stage_time_label, sizeof(stage_time_label), "In stage: %s", elapsed_str);
+    } else {
+        snprintf(stage_time_label, sizeof(stage_time_label), "In stage: ?");
+    }
+    const rect stage_time_rect = {.x=10, .y=110, .w=220, .h=10};
+    draw_label(display_handle, stage_time_rect, stage_time_label, strlen(stage_time_label), COLOR_LABEL_ALTERNATIVE, true);
 
     // Draw Take Order button
     const uint16_t take_order_button_color = YELLOW;
@@ -537,12 +643,22 @@ static void draw_active_table_page(spi_device_handle_t display_handle, uint8_t t
     draw_filled_rect(display_handle, TABLE_INFO_TAKE_ORDER_BTN.x, TABLE_INFO_TAKE_ORDER_BTN.y, TABLE_INFO_TAKE_ORDER_BTN.w, 
                      TABLE_INFO_TAKE_ORDER_BTN.h, take_order_button_color, 10);
     draw_label(display_handle, TABLE_INFO_TAKE_ORDER_BTN, take_order_label, strlen(take_order_label), COLOR_LABEL_DEFAULT, false);
+
+    // Draw Bill button
+    const uint16_t bill_button_color = YELLOW;
+    const char *bill_label = "Bill";
+    draw_filled_rect(display_handle, TABLE_INFO_BILL_BTN.x, TABLE_INFO_BILL_BTN.y, TABLE_INFO_BILL_BTN.w, 
+        TABLE_INFO_BILL_BTN.h, bill_button_color, 10);
+    draw_label(display_handle, TABLE_INFO_BILL_BTN, bill_label, strlen(bill_label), COLOR_LABEL_DEFAULT, false);
+
     // Draw Back button
     const uint16_t back_button_color = GREY;
     const char *back_label = "Back";
-    draw_filled_rect(display_handle, TABLE_INFO_BACK_BTN.x, TABLE_INFO_BACK_BTN.y, TABLE_INFO_BACK_BTN.w, TABLE_INFO_BACK_BTN.h, 
+    draw_filled_rect(display_handle, TABLE_INFO_BACK_BTN.x, TABLE_INFO_BACK_BTN.y, TABLE_INFO_BACK_BTN.w, TABLE_INFO_BACK_BTN.h,
                      back_button_color, 10);
     draw_label(display_handle, TABLE_INFO_BACK_BTN, back_label, strlen(back_label), COLOR_LABEL_ALTERNATIVE, false);
+
+    draw_battery_icon(display_handle, battery_monitor_get_bars());
 }
 
 
@@ -557,8 +673,8 @@ static ui_action decode_touch_main(uint16_t x, uint16_t y, task_kind kind) {
         return UI_ACTION_IGNORE;
     }
 
-    if (point_in_rect(x, y, MAIN_CLOSE_TABLE_BTN) && kind == MONITOR_TABLE) {
-        return UI_ACTION_CLOSE_TABLE;
+    if (point_in_rect(x, y, MAIN_BILL_BTN) && kind == MONITOR_TABLE) {
+        return UI_ACTION_BILL;
     }
 
     if (point_in_rect(x, y, MAIN_START_BTN) && UI_TASK_STATE == UI_TASK_STATE_READY) {
@@ -596,6 +712,7 @@ static ui_action decode_touch_grid(uint16_t x, uint16_t y) {
 
 static ui_action decode_touch_table_info(uint16_t x, uint16_t y) {
     if (point_in_rect(x, y, TABLE_INFO_TAKE_ORDER_BTN)) return UI_ACTION_TABLE_INFO_TAKE_ORDER;
+    if (point_in_rect(x, y, TABLE_INFO_BILL_BTN)) return UI_ACTION_TABLE_INFO_BILL;
     if (point_in_rect(x, y, TABLE_INFO_BACK_BTN)) return UI_ACTION_TABLE_INFO_BACK;
 
     return UI_ACTION_NONE;
@@ -617,8 +734,78 @@ void ui_task(void *arg) {
     display_spi_ctx display = *(display_spi_ctx *)arg;
     task_id prev_task_id = UNINITIALISED_TASK_ID;
     static uint8_t SELECTED_TABLE = 0xFF;
+    uint8_t prev_bars = 0xFF;
+    uint32_t batt_tick = 0;
+
+    bool display_sleeping = false;
+    time_ms last_activity_ms = get_time();
+
+    // Top-right corner hold state for sleep gesture
+    bool corner_hold_active = false;
+    time_ms corner_hold_start_ms = 0;
+    bool sleep_triggered_this_hold = false;
 
     while (1) {
+        time_ms now = get_time();
+        uint16_t x = 0, y = 0;
+        bool pressed = read_touch_point(&x, &y);
+
+        // --- Wake from sleep on any touch edge ---
+        if (display_sleeping) {
+            if (pressed && !last_touch_pressed) {
+                display_sleeping = false;
+                display_backlight_set(true);
+                last_activity_ms = now;
+                corner_hold_active = false;
+                sleep_triggered_this_hold = false;
+            }
+            last_touch_pressed = pressed;
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
+        // --- Inactivity sleep (30 s with no touch) ---
+        if ((now - last_activity_ms) >= UI_INACTIVITY_SLEEP_MS) {
+            display_sleeping = true;
+            display_backlight_set(false);
+            corner_hold_active = false;
+            sleep_triggered_this_hold = false;
+            last_touch_pressed = pressed;
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
+        // --- Top-right corner hold-to-sleep gesture ---
+        bool in_sleep_corner = pressed &&
+                               (x >= UI_SLEEP_CORNER_MIN_X) &&
+                               (y <= UI_SLEEP_CORNER_MAX_Y);
+
+        if (in_sleep_corner && !corner_hold_active) {
+            corner_hold_active = true;
+            corner_hold_start_ms = now;
+            sleep_triggered_this_hold = false;
+        } else if (!pressed) {
+            corner_hold_active = false;
+            sleep_triggered_this_hold = false;
+        }
+
+        if (corner_hold_active && !sleep_triggered_this_hold) {
+            if ((now - corner_hold_start_ms) >= UI_SLEEP_HOLD_MS) {
+                sleep_triggered_this_hold = true;
+                display_sleeping = true;
+                display_backlight_set(false);
+                last_touch_pressed = pressed;
+                vTaskDelay(pdMS_TO_TICKS(50));
+                continue;
+            }
+        }
+
+        // Track activity on any touch
+        if (pressed) {
+            last_activity_ms = now;
+        }
+
+        // --- Normal UI update ---
         ui_update_snapshot_from_system();
         // Copy the snapshot once per press to avoid mixed fields
         ui_snapshot snap = UI_SNAPSHOT;
@@ -627,7 +814,7 @@ void ui_task(void *arg) {
             if (!task_id_equal(snap.task_id, prev_task_id)) {
                 if (snap.has_task) {
                     if (UI_TASK_STATE == UI_TASK_STATE_READY || UI_TASK_STATE == UI_TASK_STATE_IDLE) {
-                        drv2605l_play_effect(58);
+                        drv2605l_play_effect(1);
                     }
                     UI_TASK_STATE = UI_TASK_STATE_READY;
                     UI_LOCKED_TASK_ID = snap.task_id;
@@ -635,21 +822,15 @@ void ui_task(void *arg) {
                 } else {
                     UI_TASK_STATE = UI_TASK_STATE_IDLE;
                     UI_LOCKED_TASK_ID = INVALID_TASK_ID;
-                    // draw_button_complete(display.dev_handle);
                 }
-        
+
                 draw_bottom_button_layout(display.dev_handle, snap.task_kind == MONITOR_TABLE);
                 draw_active_task_label(display.dev_handle, snap);
                 prev_task_id = snap.task_id;
             }
         }
 
-        uint16_t x = 0, y = 0;
-        bool pressed = read_touch_point(&x, &y);
-
         if (pressed && !last_touch_pressed) {
-            time_ms now = get_time();
-
             ui_action act = UI_ACTION_NONE;
             switch (UI_MODE) {
                 case UI_MODE_MAIN: {
@@ -666,15 +847,12 @@ void ui_task(void *arg) {
                             }
                             break;
 
-                        case UI_ACTION_CLOSE_TABLE:
-                            if (snap.has_task) {
-                                system_apply_user_action_to_task(snap.task_id, USER_ACTION_CLOSE_TABLE, now);
-                            }
+                        case UI_ACTION_BILL:
+                                system_apply_table_fsm_event(snap.table_number, EVENT_TABLE_REQUESTED_BILL, now);
                             break;
 
                         case UI_ACTION_START_TASK:
                             if (snap.has_task) {
-                                system_apply_user_action_to_task(snap.task_id, USER_ACTION_START_TASK, now);
                                 UI_TASK_STATE = UI_TASK_STATE_IN_PROGRESS;
                                 UI_LOCKED_TASK_ID = snap.task_id;
                                 draw_button_complete(display.dev_handle);
@@ -691,7 +869,7 @@ void ui_task(void *arg) {
                             break;
 
                         case UI_ACTION_TAKE_ORDER:
-                                system_take_order_now(snap.table_number, now);
+                                system_apply_table_fsm_event(snap.table_number, EVENT_TAKE_ORDER_EARLY_OR_REPEAT, now);
                             break;
 
                         default:
@@ -735,7 +913,13 @@ void ui_task(void *arg) {
                     }
 
                     if (act == UI_ACTION_TABLE_INFO_TAKE_ORDER) {
-                        system_take_order_now(SELECTED_TABLE, now);
+                        system_apply_table_fsm_event(SELECTED_TABLE, EVENT_TAKE_ORDER_EARLY_OR_REPEAT, now);
+                        UI_MODE = UI_MODE_MAIN;
+                        ui_draw_layout(display.dev_handle);
+                    }
+
+                    if (act == UI_ACTION_TABLE_INFO_BILL) {
+                        system_apply_table_fsm_event(SELECTED_TABLE, EVENT_TABLE_REQUESTED_BILL, now);
                         UI_MODE = UI_MODE_MAIN;
                         ui_draw_layout(display.dev_handle);
                     }
@@ -750,6 +934,19 @@ void ui_task(void *arg) {
         }
 
         last_touch_pressed = pressed;
+
+        // Update battery reading every ~10 s (200 × 50 ms ticks)
+        if (++batt_tick >= 200) {
+            batt_tick = 0;
+            battery_monitor_update();
+        }
+
+        uint8_t current_bars = battery_monitor_get_bars();
+        if (current_bars != prev_bars) {
+            draw_battery_icon(display.dev_handle, current_bars);
+            prev_bars = current_bars;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }

@@ -21,27 +21,33 @@
 typedef enum {
     SERVE_WATER = 0,
     TAKE_ORDER,
+    PREPARE_ORDER,
     SERVE_ORDER,
     MONITOR_TABLE,
+    PRESENT_BILL,
     CLEAR_TABLE,
     TASK_NOT_APPLICABLE,
 } task_kind;
 
 // Task base priorities
-static const float TASK_BASE_PRIORITY[5] = {
+static const float TASK_BASE_PRIORITY[7] = {
     [SERVE_WATER]   = 3.0f,
     [TAKE_ORDER]    = 5.0f,
+    [PREPARE_ORDER] = 5.0f,
     [SERVE_ORDER]   = 7.0f,
     [MONITOR_TABLE] = 2.0f,
+    [PRESENT_BILL]  = 5.0f,
     [CLEAR_TABLE]   = 1.0f,
 };
 
 // Task time limits
-static const time_ms TASK_TIME_LIMIT[5] = {
+static const time_ms TASK_TIME_LIMIT[7] = {
     [SERVE_WATER]   = 5 * TIME_SCALE,
     [TAKE_ORDER]    = 10 * TIME_SCALE,
+    [PREPARE_ORDER] = 5 * TIME_SCALE,
     [SERVE_ORDER]   = 5 * TIME_SCALE,
     [MONITOR_TABLE] = 15 * TIME_SCALE,
+    [PRESENT_BILL]  = 5 * TIME_SCALE,
     [CLEAR_TABLE]   = 10 * TIME_SCALE,
 };
 /* --------------- --------------- --------------- */

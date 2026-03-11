@@ -51,12 +51,6 @@ void trace_system_init(const scheduler_config *cfg);
 void system_apply_table_fsm_event(uint8_t table_index, fsm_transition_event ev, time_ms current_time_ms);
 
 
-void system_take_order_now(uint8_t table_index, time_ms current_time_ms);
-
-
-void system_close_table(uint8_t table_index, time_ms current_time_ms);
-
-
 /**
  * Apply a user-initiated action to the scheduling system and propagate
  * any resulting domain state changes.

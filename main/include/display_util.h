@@ -122,8 +122,16 @@ void display_fill(spi_device_handle_t dev_handle, uint16_t colour);
 void display_write(spi_device_handle_t dev_handle, uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_t *pixels);
 
 
-void draw_text(spi_device_handle_t display, uint16_t x, uint16_t y, const char *text, 
+void draw_text(spi_device_handle_t display, uint16_t x, uint16_t y, const char *text,
                uint16_t color, uint8_t scale);
+
+
+/**
+ * Set the display backlight on or off.
+ *
+ * @param on true to enable backlight, false to disable.
+ */
+void display_backlight_set(bool on);
 
 
 #endif

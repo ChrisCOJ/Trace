@@ -73,7 +73,10 @@ void trace_system_init(const scheduler_config *config) {
 
 
 void system_apply_table_fsm_event(uint8_t table_index, fsm_transition_event event, time_ms current_time_ms) {
-    if (!is_valid_table_index(table_index)) return;
+    if (!is_valid_table_index(table_index)) {
+        ESP_LOGE(SYS_TAG, "Invalid table index");
+        return;
+    }
 
     table_context *table_instance = &table_fsm_instances[table_index];
 
@@ -87,32 +90,12 @@ void system_apply_table_fsm_event(uint8_t table_index, fsm_transition_event even
 }
 
 
-void system_take_order_now(uint8_t table_index, time_ms current_time_ms) {
-    if (!is_valid_table_index(table_index)) return;
-
-    table_context *table = &table_fsm_instances[table_index];
-    // Kill current task before moving to Take Order
-    task *t = system_get_current_task_pointer_for_table(table_index);
-    if (!t) {
-        ESP_LOGE(SYS_TAG, "NULL task pointer returned in system_take_order_now(). Given table may not have an active task or an error occured.");
-        return;
-    }
-    kill_task(t);
-    fsm_force_take_order(table, current_time_ms);
-
-    admit_task(table_index, current_time_ms);
-    scheduler_tick(&task_scheduler, &scheduler_task_pool, current_time_ms);
-}
-
-
-void system_close_table(uint8_t table_index, time_ms current_time_ms) {
-    system_apply_table_fsm_event(table_index, EVENT_TABLE_CLOSED, current_time_ms);
-}
-
-
 bool system_apply_user_action_to_task(task_id shown_task_id, user_action action, time_ms current_time_ms) {
     task *current_task = task_pool_get(&scheduler_task_pool, shown_task_id);
-    if (!current_task) return false;  // Stale UI snapshot, ignore or force redraw
+    if (!current_task) {
+        ESP_LOGE(SYS_TAG, "NULL current_task");
+        return false;  // Stale UI snapshot, ignore or force redraw
+    }
 
     // Save a copy of the current task to use for advancing the table fsm
     task task_snapshot = *current_task;
@@ -144,20 +127,6 @@ bool system_apply_user_action_to_task(task_id shown_task_id, user_action action,
             ESP_LOGI(SYS_TAG, "IGNORE");
             task_apply_ignore(current_task, current_time_ms);
             break;  
-
-        case USER_ACTION_TAKE_ORDER:  
-            if (task_mark_completed(current_task)) {
-                ESP_LOGE(SYS_TAG, "Task pointer invalid");
-            }
-            system_take_order_now(current_task->table_number, current_time_ms);
-            break;    
-
-        case USER_ACTION_CLOSE_TABLE:
-            if (task_mark_completed(current_task)) {
-                ESP_LOGE(SYS_TAG, "Task pointer invalid");
-            }
-            system_close_table(current_task->table_number, current_time_ms); 
-            break;
 
         default: 
             ESP_LOGI(SYS_TAG, "DEFAULT");
@@ -237,6 +206,10 @@ task_kind system_get_current_task_kind_for_table(uint8_t table_index) {
             kind = TAKE_ORDER;
             break;
 
+        case TABLE_PLACED_ORDER:
+            kind = PREPARE_ORDER;
+            break;
+
         case TABLE_WAITING_FOR_ORDER:
             kind = SERVE_ORDER;
             break;
@@ -247,6 +220,10 @@ task_kind system_get_current_task_kind_for_table(uint8_t table_index) {
 
         case TABLE_CHECKUP:
             kind = MONITOR_TABLE;
+            break;
+
+        case TABLE_REQUESTED_BILL:
+            kind = PRESENT_BILL;
             break;
 
         case TABLE_DONE:

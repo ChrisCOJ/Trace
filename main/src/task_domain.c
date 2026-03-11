@@ -80,11 +80,13 @@ return_status kill_task(task *task) {
 
 const char *task_kind_to_str(task_kind kind) {
     switch (kind) {
-        case SERVE_WATER:   return "SERVE_WATER";
-        case TAKE_ORDER:    return "TAKE_ORDER";
-        case SERVE_ORDER:   return "SERVE_ORDER";
-        case MONITOR_TABLE: return "MONITOR_TABLE";
-        case CLEAR_TABLE:   return "CLEAR_TABLE";
+        case SERVE_WATER:   return "SERVE WATER";
+        case TAKE_ORDER:    return "TAKE ORDER";
+        case PREPARE_ORDER: return "PREAPARE ORDER";
+        case SERVE_ORDER:   return "SERVE ORDER";
+        case MONITOR_TABLE: return "MONITOR TABLE";
+        case PRESENT_BILL:  return "PRESENT BILL";
+        case CLEAR_TABLE:   return "CLEAR TABLE";
         default:            return "UNKNOWN";
     }
 }

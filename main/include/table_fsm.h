@@ -12,7 +12,7 @@ typedef enum {
     EVENT_MARK_COMPLETE,
     EVENT_TAKE_ORDER_EARLY_OR_REPEAT,
     EVENT_CUSTOMERS_SEATED,
-    EVENT_TABLE_CLOSED,
+    EVENT_TABLE_REQUESTED_BILL,
 
     TIMEOUT_PERIODIC_CHECKIN,
 } fsm_transition_event;
@@ -22,9 +22,11 @@ typedef enum {
     TABLE_IDLE,
     TABLE_SEATED,
     TABLE_READY_FOR_ORDER,
+    TABLE_PLACED_ORDER,
     TABLE_WAITING_FOR_ORDER,
     TABLE_DINING,
     TABLE_CHECKUP,
+    TABLE_REQUESTED_BILL,
     TABLE_DONE,
 } table_state;
 
@@ -45,6 +47,9 @@ typedef struct {
 
 
 void fsm_force_take_order(table_context *table, time_ms current_time);
+
+
+void fsm_force_bill_requested(table_context *table, time_ms current_time);
 
 
 /**

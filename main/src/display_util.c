@@ -307,6 +307,11 @@ display_spi_ctx display_init(void) {
 }
 
 
+void display_backlight_set(bool on) {
+    gpio_set_level(BACKLIGHT, on ? LCD_BACKLIGHT_ON_LEVEL : (1 - LCD_BACKLIGHT_ON_LEVEL));
+}
+
+
 /* Write an RGB565 block into an address window */
 void display_write(spi_device_handle_t dev_handle,
                    uint16_t x, uint16_t y,
