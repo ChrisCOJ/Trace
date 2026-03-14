@@ -62,6 +62,10 @@ enum {
 
     UI_NO_TABLE_SELECTED = 0xFF,
 
+    UI_GRID_NAV_BTN_W = 120,   // Prev / Next each take half the bottom strip
+
+    UI_TOPBAR_BACK_W = 55,     // Consistent top-left back button width on grid/info screens
+
     // Sleep gesture: top-right corner zone (x >= MIN_X, y <= MAX_Y)
     UI_SLEEP_CORNER_MIN_X = 195,
     UI_SLEEP_CORNER_MAX_Y = 40,
@@ -119,12 +123,12 @@ enum {
 } UI_FONT_SCALE;
 
 
-static const uint8_t NUM_OF_TABLES      = 9;
+static const uint8_t NUM_OF_TABLES      = 24;
+static const uint8_t TABLES_PER_PAGE    = 9;
 
-/* Used to switch between UI pages */
 static volatile ui_mode UI_MODE = UI_MODE_TABLE_GRID;
-/* Used to store the last drawn UI information */
 static volatile ui_snapshot UI_SNAPSHOT;
+static uint8_t UI_GRID_PAGE = 0;
 
 static const char *TAG_UI = "ui";
 /* Simple edge detector to avoid repeated triggers */
@@ -134,7 +138,6 @@ static bool last_touch_pressed = false;
 static const uint16_t COLOR_LABEL_DEFAULT      = BLACK;
 static const uint16_t COLOR_LABEL_ALTERNATIVE  = WHITE;
 
-// Background colour
 const uint16_t BG                              = BLACK;
 
 
@@ -152,7 +155,6 @@ static ui_task_state UI_TASK_STATE = UI_TASK_STATE_IDLE;
 static task_id UI_LOCKED_TASK_ID = { UINT16_MAX, 0 };
 
 
-/* Simple rectangular hit region */
 typedef struct {
     uint16_t x;
     uint16_t y;
@@ -215,17 +217,32 @@ static const rect TABLE_INFO_BILL_BTN = {
     .w = UI_HALF_BTN_W, 
     .h = UI_TABLE_INFO_BTN_H };
 
-static const rect TABLE_INFO_BACK_BTN = { 
-    .x = UI_MARGIN_X, 
-    .y = UI_TABLE_INFO_BACK_Y, 
-    .w = UI_FULL_BTN_W, 
+/* Consistent top-left back button — same position on grid and table-info screens */
+static const rect TOPBAR_BACK_BTN = {
+    .x = 0,
+    .y = UI_TOPBAR_Y,
+    .w = UI_TOPBAR_BACK_W,
+    .h = UI_TOPBAR_H
+};
+
+/* Undo button — full-width at the bottom of the table-info screen */
+static const rect TABLE_INFO_UNDO_BTN = {
+    .x = UI_MARGIN_X,
+    .y = UI_TABLE_INFO_BACK_Y,
+    .w = UI_FULL_BTN_W,
     .h = UI_TABLE_INFO_BTN_H };
 
-/* Back button on grid screen */
-static const rect TABLE_GRID_BACK_BTN = {
+/* Prev / Next navigation strip on grid screen (no Back — use TOPBAR_BACK_BTN) */
+static const rect TABLE_GRID_PREV_BTN = {
     .x = 0,
     .y = UI_BOTTOM_BACK_Y,
-    .w = UI_SCREEN_W,
+    .w = UI_GRID_NAV_BTN_W,
+    .h = UI_BACK_BTN_H
+};
+static const rect TABLE_GRID_NEXT_BTN = {
+    .x = UI_GRID_NAV_BTN_W,
+    .y = UI_BOTTOM_BACK_Y,
+    .w = UI_GRID_NAV_BTN_W,
     .h = UI_BACK_BTN_H
 };
 
@@ -264,7 +281,6 @@ static inline bool point_in_rect(uint16_t x, uint16_t y, rect region)
     const int x_padding = 10;
     const int y_padding = 5;
 
-    // Clamps
     int x_left = (int)region.x - x_padding;
     if (x_left < 0) x_left = 0;
     int x_right = (int)region.x + region.w + x_padding;
@@ -298,6 +314,12 @@ static void ui_update_snapshot_from_system() {
 
 /* ------------ Draw functions ------------ */
 
+static void draw_back_icon(spi_device_handle_t display) {
+    const uint16_t icon_x = 8;
+    const uint16_t icon_y = (UI_TOPBAR_H - CHAR_HEIGHT * UI_TEXT_SCALE) / 2;
+    draw_text(display, icon_x, icon_y, "<", WHITE, UI_TEXT_SCALE);
+}
+
 static void draw_label(spi_device_handle_t display, rect r, const char *label, size_t label_len, uint16_t text_color, bool snap_left) {
     // Split label in parts and arrange vertically if too long for its container.
     if (label_len * CHAR_WIDTH * UI_TEXT_SCALE > r.w) {
@@ -307,8 +329,8 @@ static void draw_label(spi_device_handle_t display, rect r, const char *label, s
         if (space) {
             const uint8_t VERTICAL_SPACING = 7;
             // Split the text vertically after the first space
-            *space = '\0';  // NULL terminate the first word to split the text into two parts
-            const char *first_part = label_cpy;  // Now label points to the first word in the string
+            *space = '\0';
+            const char *first_part = label_cpy;
             const char *second_part = space + 1;
 
             uint16_t first_part_y = r.y + r.h/2 - (CHAR_HEIGHT * UI_TEXT_SCALE + VERTICAL_SPACING);
@@ -344,7 +366,6 @@ static void draw_filled_rect(spi_device_handle_t display,
     
     if (width > DISPLAY_WIDTH || height > DISPLAY_HEIGHT) return;
 
-    // Cap rounding radius to half of the shortest side of the rectangle.
     uint16_t max_radius = (width < height ? width : height) / 2;
     if (radius > max_radius) {
         radius = max_radius;
@@ -352,7 +373,6 @@ static void draw_filled_rect(spi_device_handle_t display,
 
     /* Build x offset buffer */
     static uint8_t x_offset_buf[DISPLAY_HEIGHT];
-    // Calculate x offset of the top corners.
     for (int i = 0; i <= radius; ++i) {
         uint8_t dy = radius - i;
         uint8_t dx = floor(sqrt(radius * radius - dy * dy));
@@ -365,7 +385,6 @@ static void draw_filled_rect(spi_device_handle_t display,
         x_offset_buf[i] = 0;
     }
     
-    // Calculate x offset of the bottom corners.
     for (int i = radius; i >= 0; --i) {
         uint8_t dy = radius - i;
         uint8_t dx = floor(sqrt(radius * radius - dy * dy));
@@ -373,16 +392,13 @@ static void draw_filled_rect(spi_device_handle_t display,
         x_offset_buf[height - i - 1] = x_offset;
     }
 
-    // Populate the scanline buffer
     for (int row = 0; row < height; ++row) {
-        
-        // Clear cut pixels around the corners
+
+        // Clear corner pixels
         if (x_offset_buf[row] != 0) {
-            // left corners
             for (int i = 0; i < x_offset_buf[row]; ++i) {
                 scanline_buffer[i] = 0;
             }
-            // right corners
             for (int i = width - x_offset_buf[row]; i < width; ++i) {
                 scanline_buffer[i] = 0;
             }
@@ -476,12 +492,10 @@ static void draw_bottom_button_layout(spi_device_handle_t display_handle, bool m
     draw_filled_rect(display_handle, bg_clear_rect.x, bg_clear_rect.y, bg_clear_rect.w, bg_clear_rect.h, BLACK, 0);
 
     if (monitor) {
-        // Draw new buttons specific to MONITOR TABLE state
         draw_button_bill(display_handle);
         draw_button_take_order(display_handle);
     }
     else {
-        // Draw normal state buttons
         draw_button_ignore(display_handle);
     }
 }
@@ -524,7 +538,6 @@ static void ui_draw_main(spi_device_handle_t display) {
         snprintf(task_table_label, sizeof(task_table_label), "Table %d", UI_SNAPSHOT.table_number + 1);
         draw_label(display, (rect){.x=0,.y=70+CHAR_HEIGHT*UI_TEXT_SCALE,.w=240,.h=30}, task_table_label, strlen(task_table_label), COLOR_LABEL_ALTERNATIVE, false);
 
-        // buttons
         if (UI_TASK_STATE == UI_TASK_STATE_READY) {
             draw_button_start(display);
         }
@@ -557,50 +570,73 @@ static rect table_tile_rect(uint8_t index) {
 
 
 static void ui_draw_grid(spi_device_handle_t display) {
-    uint16_t color_tile;
+    const uint8_t num_pages   = (NUM_OF_TABLES + TABLES_PER_PAGE - 1) / TABLES_PER_PAGE;
+    const uint8_t page_start  = UI_GRID_PAGE * TABLES_PER_PAGE;
 
-    const char *select_table_label = "Select Table";
-    const char *back_label = "Back";
+    const char *title_label = "Select Table";
+    const char *prev_label  = "< Prev";
+    const char *next_label  = "Next >";
 
     display_fill(display, BG);
-    draw_label(display, (rect){.x=0,.y=0,.w=240,.h=30}, select_table_label, strlen(select_table_label), COLOR_LABEL_ALTERNATIVE, false);
 
-    for (int table_index = 0; table_index < NUM_OF_TABLES; ++table_index) {
-        table_state state = system_get_table_state(table_index);
-        if (state == TABLE_IDLE) {
-            color_tile = LIGHT_GREY;
-        }
-        else {
-            color_tile = YELLOW;
-        }
-        rect table_tile = table_tile_rect(table_index);
-        draw_filled_rect(display, table_tile.x, table_tile.y, table_tile.w, table_tile.h, color_tile, 10);
-        
+    draw_back_icon(display);
+    draw_label(display, (rect){.x=0,.y=0,.w=UI_SCREEN_W,.h=UI_TOPBAR_H},
+               title_label, strlen(title_label), COLOR_LABEL_ALTERNATIVE, false);
+
+    for (uint8_t slot = 0; slot < TABLES_PER_PAGE; ++slot) {
+        uint8_t table_index = page_start + slot;
+        if (table_index >= NUM_OF_TABLES) break;
+
+        table_state table_current_state = system_get_table_state(table_index);
+        uint16_t color_tile = (table_current_state == TABLE_IDLE) ? LIGHT_GREY : YELLOW;
+
+        rect tile = table_tile_rect(slot);
+        draw_filled_rect(display, tile.x, tile.y, tile.w, tile.h, color_tile, 10);
+
         char table_label[4];
-        snprintf(table_label, sizeof(table_label), "T%d", table_index + 1);
-        draw_label(display, table_tile, table_label, strlen(table_label), COLOR_LABEL_DEFAULT, false);
+        snprintf(table_label, sizeof(table_label), "T%u", table_index + 1);
+        draw_label(display, tile, table_label, strlen(table_label), COLOR_LABEL_DEFAULT, false);
     }
 
-    draw_filled_rect(display, TABLE_GRID_BACK_BTN.x, TABLE_GRID_BACK_BTN.y, TABLE_GRID_BACK_BTN.w, TABLE_GRID_BACK_BTN.h, LIGHT_GREY, 0);
-    draw_label(display, TABLE_GRID_BACK_BTN, back_label, strlen(back_label), COLOR_LABEL_ALTERNATIVE, false);
+    uint16_t prev_color = (UI_GRID_PAGE > 0)             ? LIGHT_GREY : DARK_GREY;
+    uint16_t next_color = (UI_GRID_PAGE < num_pages - 1) ? LIGHT_GREY : DARK_GREY;
+
+    draw_filled_rect(display, TABLE_GRID_PREV_BTN.x, TABLE_GRID_PREV_BTN.y, TABLE_GRID_PREV_BTN.w, TABLE_GRID_PREV_BTN.h, prev_color, 0);
+    draw_label(display, TABLE_GRID_PREV_BTN, prev_label, strlen(prev_label), COLOR_LABEL_ALTERNATIVE, false);
+
+    draw_filled_rect(display, TABLE_GRID_NEXT_BTN.x, TABLE_GRID_NEXT_BTN.y, TABLE_GRID_NEXT_BTN.w, TABLE_GRID_NEXT_BTN.h, next_color, 0);
+    draw_label(display, TABLE_GRID_NEXT_BTN, next_label, strlen(next_label), COLOR_LABEL_ALTERNATIVE, false);
 
     draw_battery_icon(display, battery_monitor_get_bars());
+}
+
+
+static inline bool state_can_take_order(table_state state) {
+    return state == TABLE_SEATED || state == TABLE_PLACED_ORDER ||
+           state == TABLE_WAITING_FOR_ORDER || state == TABLE_DINING || state == TABLE_CHECKUP;
+}
+
+static inline bool state_can_request_bill(table_state state) {
+    return state == TABLE_WAITING_FOR_ORDER || state == TABLE_DINING || state == TABLE_CHECKUP;
+}
+
+static inline bool table_can_undo(const table_context *tbl) {
+    return tbl != NULL && tbl->prev_state != TABLE_IDLE;
 }
 
 
 static void draw_active_table_page(spi_device_handle_t display_handle, uint8_t table_index) {
     const uint16_t color_table_number = YELLOW;
 
-    // Clear screen
     display_fill(display_handle, BG);
 
-    // Draw table number
+    draw_back_icon(display_handle);
+
     char table_number_label[10];
     snprintf(table_number_label, sizeof(table_number_label), "Table %d", table_index + 1);
-    const rect table_info_rect = {.x=0, .y=10, .w=240, .h=10};
-    draw_label(display_handle, table_info_rect, table_number_label, strlen(table_number_label), color_table_number, false);
+    draw_label(display_handle, (rect){.x=0,.y=0,.w=UI_SCREEN_W,.h=UI_TOPBAR_H},
+               table_number_label, strlen(table_number_label), color_table_number, false);
 
-    // Draw current task for table
     const char *current_task_title = "Task: ";
     const rect current_task_title_rect = {.x=10, .y=50, .w=80, .h=10};
     draw_label(display_handle, current_task_title_rect, current_task_title, strlen(current_task_title), COLOR_LABEL_ALTERNATIVE, true);
@@ -616,7 +652,6 @@ static void draw_active_table_page(spi_device_handle_t display_handle, uint8_t t
     }
     draw_label(display_handle, current_task_label_rect, current_task_label, strlen(current_task_label), COLOR_LABEL_ALTERNATIVE, true);
 
-    // Draw current FSM stage
     const table_context *tbl = system_get_table(table_index);
     time_ms now = get_time();
 
@@ -625,7 +660,6 @@ static void draw_active_table_page(spi_device_handle_t display_handle, uint8_t t
     const rect stage_rect = {.x=10, .y=80, .w=220, .h=10};
     draw_label(display_handle, stage_rect, stage_label, strlen(stage_label), COLOR_LABEL_ALTERNATIVE, true);
 
-    // Draw time spent in current stage
     char stage_time_label[32];
     if (tbl) {
         char elapsed_str[16];
@@ -637,26 +671,35 @@ static void draw_active_table_page(spi_device_handle_t display_handle, uint8_t t
     const rect stage_time_rect = {.x=10, .y=110, .w=220, .h=10};
     draw_label(display_handle, stage_time_rect, stage_time_label, strlen(stage_time_label), COLOR_LABEL_ALTERNATIVE, true);
 
-    // Draw Take Order button
-    const uint16_t take_order_button_color = YELLOW;
+    table_state tbl_state = tbl ? tbl->state : TABLE_IDLE;
+    bool take_order_enabled = state_can_take_order(tbl_state);
+    bool bill_enabled = state_can_request_bill(tbl_state);
+
+    const uint16_t take_order_btn_color  = take_order_enabled ? YELLOW     : DARK_GREY;
+    const uint16_t take_order_text_color = take_order_enabled ? COLOR_LABEL_DEFAULT : GREY;
     const char *take_order_label = "Take Order";
-    draw_filled_rect(display_handle, TABLE_INFO_TAKE_ORDER_BTN.x, TABLE_INFO_TAKE_ORDER_BTN.y, TABLE_INFO_TAKE_ORDER_BTN.w, 
-                     TABLE_INFO_TAKE_ORDER_BTN.h, take_order_button_color, 10);
-    draw_label(display_handle, TABLE_INFO_TAKE_ORDER_BTN, take_order_label, strlen(take_order_label), COLOR_LABEL_DEFAULT, false);
+    draw_filled_rect(display_handle, TABLE_INFO_TAKE_ORDER_BTN.x, TABLE_INFO_TAKE_ORDER_BTN.y,
+                     TABLE_INFO_TAKE_ORDER_BTN.w, TABLE_INFO_TAKE_ORDER_BTN.h, take_order_btn_color, 10);
+    draw_label(display_handle, TABLE_INFO_TAKE_ORDER_BTN, take_order_label, strlen(take_order_label),
+               take_order_text_color, false);
 
-    // Draw Bill button
-    const uint16_t bill_button_color = YELLOW;
+    const uint16_t bill_btn_color  = bill_enabled ? YELLOW     : DARK_GREY;
+    const uint16_t bill_text_color = bill_enabled ? COLOR_LABEL_DEFAULT : GREY;
     const char *bill_label = "Bill";
-    draw_filled_rect(display_handle, TABLE_INFO_BILL_BTN.x, TABLE_INFO_BILL_BTN.y, TABLE_INFO_BILL_BTN.w, 
-        TABLE_INFO_BILL_BTN.h, bill_button_color, 10);
-    draw_label(display_handle, TABLE_INFO_BILL_BTN, bill_label, strlen(bill_label), COLOR_LABEL_DEFAULT, false);
+    draw_filled_rect(display_handle, TABLE_INFO_BILL_BTN.x, TABLE_INFO_BILL_BTN.y,
+                     TABLE_INFO_BILL_BTN.w, TABLE_INFO_BILL_BTN.h, bill_btn_color, 10);
+    draw_label(display_handle, TABLE_INFO_BILL_BTN, bill_label, strlen(bill_label),
+               bill_text_color, false);
 
-    // Draw Back button
-    const uint16_t back_button_color = GREY;
-    const char *back_label = "Back";
-    draw_filled_rect(display_handle, TABLE_INFO_BACK_BTN.x, TABLE_INFO_BACK_BTN.y, TABLE_INFO_BACK_BTN.w, TABLE_INFO_BACK_BTN.h,
-                     back_button_color, 10);
-    draw_label(display_handle, TABLE_INFO_BACK_BTN, back_label, strlen(back_label), COLOR_LABEL_ALTERNATIVE, false);
+    bool undo_enabled = table_can_undo(tbl);
+    const uint16_t undo_btn_color  = undo_enabled ? ORANGE    : DARK_GREY;
+    const uint16_t undo_text_color = undo_enabled ? COLOR_LABEL_DEFAULT : GREY;
+    const char *undo_label = "Undo";
+    draw_filled_rect(display_handle, TABLE_INFO_UNDO_BTN.x, TABLE_INFO_UNDO_BTN.y,
+                     TABLE_INFO_UNDO_BTN.w, TABLE_INFO_UNDO_BTN.h, undo_btn_color, 10);
+    draw_label(display_handle, TABLE_INFO_UNDO_BTN, undo_label, strlen(undo_label),
+               undo_text_color, false);
+
 
     draw_battery_icon(display_handle, battery_monitor_get_bars());
 }
@@ -698,12 +741,14 @@ static ui_action decode_touch_main(uint16_t x, uint16_t y, task_kind kind) {
 
 
 static ui_action decode_touch_grid(uint16_t x, uint16_t y) {
-    if (point_in_rect(x, y, TABLE_GRID_BACK_BTN)) return UI_ACTION_BACK;
+    if (point_in_rect(x, y, TOPBAR_BACK_BTN))     return UI_ACTION_BACK;
+    if (point_in_rect(x, y, TABLE_GRID_PREV_BTN)) return UI_ACTION_GRID_PREV_PAGE;
+    if (point_in_rect(x, y, TABLE_GRID_NEXT_BTN)) return UI_ACTION_GRID_NEXT_PAGE;
 
-    for (size_t i = 0; i < NUM_OF_TABLES; i++) {
-        rect table_tile = table_tile_rect(i);
-        if (point_in_rect(x, y, table_tile)) {
-            return (ui_action)(UI_ACTION_TABLE_TILE_1 + i);
+    for (uint8_t slot = 0; slot < TABLES_PER_PAGE; slot++) {
+        rect tile = table_tile_rect(slot);
+        if (point_in_rect(x, y, tile)) {
+            return (ui_action)(UI_ACTION_TABLE_TILE_1 + slot);
         }
     }
     return UI_ACTION_NONE;
@@ -711,9 +756,10 @@ static ui_action decode_touch_grid(uint16_t x, uint16_t y) {
 
 
 static ui_action decode_touch_table_info(uint16_t x, uint16_t y) {
+    if (point_in_rect(x, y, TOPBAR_BACK_BTN))           return UI_ACTION_TABLE_INFO_BACK;
     if (point_in_rect(x, y, TABLE_INFO_TAKE_ORDER_BTN)) return UI_ACTION_TABLE_INFO_TAKE_ORDER;
-    if (point_in_rect(x, y, TABLE_INFO_BILL_BTN)) return UI_ACTION_TABLE_INFO_BILL;
-    if (point_in_rect(x, y, TABLE_INFO_BACK_BTN)) return UI_ACTION_TABLE_INFO_BACK;
+    if (point_in_rect(x, y, TABLE_INFO_BILL_BTN))       return UI_ACTION_TABLE_INFO_BILL;
+    if (point_in_rect(x, y, TABLE_INFO_UNDO_BTN))       return UI_ACTION_TABLE_INFO_UNDO;
 
     return UI_ACTION_NONE;
 }
@@ -800,7 +846,6 @@ void ui_task(void *arg) {
             }
         }
 
-        // Track activity on any touch
         if (pressed) {
             last_activity_ms = now;
         }
@@ -837,6 +882,7 @@ void ui_task(void *arg) {
                     act = decode_touch_main(x, y, snap.task_kind);
                     switch (act) {
                         case UI_ACTION_OPEN_TABLES:
+                            UI_GRID_PAGE = 0;
                             UI_MODE = UI_MODE_TABLE_GRID;
                             ui_draw_layout(display.dev_handle);
                             break;
@@ -879,20 +925,35 @@ void ui_task(void *arg) {
 
                 case UI_MODE_TABLE_GRID: {
                     act = decode_touch_grid(x, y);
+                    const uint8_t num_pages = (NUM_OF_TABLES + TABLES_PER_PAGE - 1) / TABLES_PER_PAGE;
+
                     if (act == UI_ACTION_BACK) {
                         UI_MODE = UI_MODE_MAIN;
                         ui_draw_layout(display.dev_handle);
                         break;
                     }
 
-                    if (act >= UI_ACTION_TABLE_TILE_1 && act <= UI_ACTION_TABLE_TILE_9) {
-                        uint8_t table = (uint8_t)(act - UI_ACTION_TABLE_TILE_1); // 1..9
+                    if (act == UI_ACTION_GRID_PREV_PAGE && UI_GRID_PAGE > 0) {
+                        UI_GRID_PAGE--;
+                        ui_draw_grid(display.dev_handle);
+                        break;
+                    }
 
-                        // Only start if idle
-                        table_state state = system_get_table_state(table);
-                        if (state == TABLE_IDLE) {
+                    if (act == UI_ACTION_GRID_NEXT_PAGE && UI_GRID_PAGE < num_pages - 1) {
+                        UI_GRID_PAGE++;
+                        ui_draw_grid(display.dev_handle);
+                        break;
+                    }
+
+                    if (act >= UI_ACTION_TABLE_TILE_1 && act <= UI_ACTION_TABLE_TILE_9) {
+                        uint8_t slot = (uint8_t)(act - UI_ACTION_TABLE_TILE_1);
+                        uint8_t table = UI_GRID_PAGE * TABLES_PER_PAGE + slot;
+
+                        if (table >= NUM_OF_TABLES) break;
+
+                        table_state tapped_table_state = system_get_table_state(table);
+                        if (tapped_table_state == TABLE_IDLE) {
                             system_apply_table_fsm_event(table, EVENT_CUSTOMERS_SEATED, now);
-                            // close the grid immediately
                             UI_MODE = UI_MODE_MAIN;
                             ui_draw_layout(display.dev_handle);
                         } else {
@@ -912,16 +973,24 @@ void ui_task(void *arg) {
                         break;
                     }
 
-                    if (act == UI_ACTION_TABLE_INFO_TAKE_ORDER) {
+                    if (act == UI_ACTION_TABLE_INFO_TAKE_ORDER &&
+                        state_can_take_order(system_get_table_state(SELECTED_TABLE))) {
                         system_apply_table_fsm_event(SELECTED_TABLE, EVENT_TAKE_ORDER_EARLY_OR_REPEAT, now);
                         UI_MODE = UI_MODE_MAIN;
                         ui_draw_layout(display.dev_handle);
                     }
 
-                    if (act == UI_ACTION_TABLE_INFO_BILL) {
+                    if (act == UI_ACTION_TABLE_INFO_BILL &&
+                        state_can_request_bill(system_get_table_state(SELECTED_TABLE))) {
                         system_apply_table_fsm_event(SELECTED_TABLE, EVENT_TABLE_REQUESTED_BILL, now);
                         UI_MODE = UI_MODE_MAIN;
                         ui_draw_layout(display.dev_handle);
+                    }
+
+                    if (act == UI_ACTION_TABLE_INFO_UNDO &&
+                        table_can_undo(system_get_table(SELECTED_TABLE))) {
+                        system_apply_table_fsm_event(SELECTED_TABLE, EVENT_UNDO, now);
+                        draw_active_table_page(display.dev_handle, SELECTED_TABLE);
                     }
                 } break;
 

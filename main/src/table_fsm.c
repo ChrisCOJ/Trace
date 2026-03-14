@@ -3,6 +3,7 @@
 
 
 static inline void enter_state(table_context *table, table_state next, time_ms current_time) {
+    table->prev_state = table->state;
     table->state = next;
     table->state_entered_at = current_time;
 }
@@ -20,6 +21,14 @@ void fsm_force_bill_requested(table_context *table, time_ms current_time) {
 
 bool table_apply_event(table_context *table, fsm_transition_event event, time_ms current_time) {
     table_state prev = table->state;
+
+    if (event == EVENT_UNDO && table->prev_state != TABLE_IDLE) {
+        table_state restore = table->prev_state;
+        table->prev_state = TABLE_IDLE;
+        table->state = restore;
+        table->state_entered_at = current_time;
+        return true;
+    }
 
     switch (table->state) {
         case TABLE_IDLE:
@@ -44,11 +53,20 @@ bool table_apply_event(table_context *table, fsm_transition_event event, time_ms
             if (event == EVENT_MARK_COMPLETE) {
                 enter_state(table, TABLE_WAITING_FOR_ORDER, current_time);
             }
+            else if (event == EVENT_TAKE_ORDER_EARLY_OR_REPEAT) {
+                enter_state(table, TABLE_READY_FOR_ORDER, current_time);
+            }
             break;
 
         case TABLE_WAITING_FOR_ORDER:
             if (event == EVENT_MARK_COMPLETE) {
                 enter_state(table, TABLE_DINING, current_time);
+            }
+            else if (event == EVENT_TAKE_ORDER_EARLY_OR_REPEAT) {
+                enter_state(table, TABLE_READY_FOR_ORDER, current_time);
+            }
+            else if (event == EVENT_TABLE_REQUESTED_BILL) {
+                enter_state(table, TABLE_REQUESTED_BILL, current_time);
             }
             break;
 
@@ -150,7 +168,7 @@ void table_fsm_tick(table_context *table, time_ms current_time) {
 
     switch (table->state) {
         case TABLE_DINING:
-            if (dt >= 10 * 60 * 1000) { // 10 sec since entered dining (change to 10 min once done testing)
+            if (dt >= 1 * 60 * 1000) {  // ms
                 table_apply_event(table, TIMEOUT_PERIODIC_CHECKIN, current_time);
             }
             break;

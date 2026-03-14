@@ -10,7 +10,7 @@
 #include "../include/trace_scheduler.h"
 
 
-#define MAX_TABLES      9
+#define MAX_TABLES      24
 
 extern table_context table_fsm_instances[MAX_TABLES];
 

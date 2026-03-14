@@ -25,6 +25,24 @@ static inline bool is_valid_table_index(uint8_t table_index) {
 }
 
 
+// Kill all non-terminal tasks for a table so stale tasks don’t compete with
+// the task implied by the table’s new FSM state.
+static void kill_tasks_for_table(uint8_t table_number) {
+    for (uint16_t i = 0; i < TASK_POOL_CAPACITY; ++i) {
+        task_slot *slot = &scheduler_task_pool.slots[i];
+        if (!slot->occupied) continue;
+
+        task *t = &slot->task_instance;
+        if (t->table_number == table_number &&
+            t->status != TASK_KILLED && t->status != TASK_COMPLETED) {
+            kill_task(t);
+            ESP_LOGI(SYS_TAG, "killed stale %s task (table=%u) on FSM transition",
+                     task_kind_to_str(t->kind), (unsigned)table_number);
+        }
+    }
+}
+
+
 // Admit the task implied by the table’s current FSM state (if any).
 static void admit_task(const uint8_t table_number, time_ms current_time_ms) {
     if (!is_valid_table_index(table_number)) return;
@@ -41,14 +59,11 @@ static void admit_task(const uint8_t table_number, time_ms current_time_ms) {
 }
 
 
-// When a task is completed, advance the corresponding table FSM and admit the next task.
+// Advance the table FSM on task completion and queue the next task.
 static void advance_table_fsm(const uint8_t table_number, time_ms current_time) {
     if (!is_valid_table_index(table_number)) return;
 
-    // Progress the table FSM on completion.
     (void)table_apply_event(&table_fsm_instances[table_number], EVENT_MARK_COMPLETE, current_time);
-
-    // Admit the next task for the new state (if any).
     admit_task(table_number, current_time);
 }
 
@@ -81,8 +96,8 @@ void system_apply_table_fsm_event(uint8_t table_index, fsm_transition_event even
     table_context *table_instance = &table_fsm_instances[table_index];
 
     bool did_state_change = table_apply_event(table_instance, event, current_time_ms);
-    // Only admit a new task into the system if the table's state changed
     if (did_state_change) {
+        kill_tasks_for_table(table_index);
         admit_task(table_index, current_time_ms);
     }
 
@@ -97,13 +112,10 @@ bool system_apply_user_action_to_task(task_id shown_task_id, user_action action,
         return false;  // Stale UI snapshot, ignore or force redraw
     }
 
-    // Save a copy of the current task to use for advancing the table fsm
     task task_snapshot = *current_task;
 
-    // Keep task state up to date for schedulability checks / logging
     refresh_task(current_task, current_time_ms);
 
-    // Block actions if the task is not schedulable
     if (current_task->status != TASK_ELIGIBLE) {
         ESP_LOGI(SYS_TAG, "action_blocked for task=%s (table=%u). Reason=%s",
                  task_kind_to_str(current_task->kind), (unsigned)current_task->table_number, task_status_to_str(current_task->status));
@@ -133,7 +145,6 @@ bool system_apply_user_action_to_task(task_id shown_task_id, user_action action,
             return false;
     }
 
-    /* LOGS */
     ESP_LOGI(SYS_TAG,
         "task=%s (table=%u) status=%s ignore_count=%u suppress_until=%lu",
         task_kind_to_str(current_task->kind),
@@ -141,9 +152,7 @@ bool system_apply_user_action_to_task(task_id shown_task_id, user_action action,
         task_status_to_str((unsigned)current_task->status),
         (unsigned)current_task->ignore_count,
         (unsigned long)current_task->suppress_until);
-    /* LOGS */
 
-    // Tick scheduler to pick next suggestion
     scheduler_tick(&task_scheduler, &scheduler_task_pool, current_time_ms);
     return true;
 }

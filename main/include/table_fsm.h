@@ -13,6 +13,7 @@ typedef enum {
     EVENT_TAKE_ORDER_EARLY_OR_REPEAT,
     EVENT_CUSTOMERS_SEATED,
     EVENT_TABLE_REQUESTED_BILL,
+    EVENT_UNDO,
 
     TIMEOUT_PERIODIC_CHECKIN,
 } fsm_transition_event;
@@ -41,6 +42,7 @@ typedef struct {
     uint8_t table_number;
 
     table_state state;
+    table_state prev_state;
     time_ms state_entered_at;
 } table_context;
 

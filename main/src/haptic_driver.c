@@ -11,8 +11,8 @@
 
 // ---- I2C config ----
 #define I2C_PORT            I2C_NUM_1
-#define I2C_SDA_GPIO        17
-#define I2C_SCL_GPIO        18
+#define I2C_SDA_GPIO        18
+#define I2C_SCL_GPIO        17
 #define I2C_FREQ_HZ         100000
 
 // ---- DRV2605L ----
