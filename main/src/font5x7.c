@@ -2,8 +2,10 @@
 
 
 
+static const uint8_t font5x7_exclaim[5]      = {0x00,0x00,0x5F,0x00,0x00};
 static const uint8_t font5x7_colon[5]        = {0x6C,0x6C,0x00,0x00,0x00};
 static const uint8_t font5x7_less_than[5]    = {0x08,0x14,0x22,0x41,0x00};
+static const uint8_t font5x7_greater_than[5] = {0x00,0x41,0x22,0x14,0x08};
 
 
 /* Digits 0–9 */
@@ -94,8 +96,10 @@ const uint8_t *get_glyph(char c) {
     if (c >= 'a' && c <= 'z')
         return font5x7_lower[c - 'a'];
 
+    if (c == '!')  return font5x7_exclaim;
     if (c == ':')  return font5x7_colon;
     if (c == '<')  return font5x7_less_than;
+    if (c == '>')  return font5x7_greater_than;
 
     return 0; // unsupported character
 }

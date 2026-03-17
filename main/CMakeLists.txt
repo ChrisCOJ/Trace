@@ -2,6 +2,7 @@ idf_component_register(SRCS "src/main.c" "src/display_util.c" "src/mpu_i2c.c"
                             "src/task_domain.c" "src/task_pool.c" "src/trace_scheduler.c"
                             "src/trace_system.c" "src/user_interface.c" "src/table_fsm.c"
                             "src/touch_controller_util.c" "src/font5x7.c" "src/haptic_driver.c"
-                            "src/battery_monitor.c"
+                            "src/battery_monitor.c" "src/ui_screens.c" "src/ui_widgets.c"
+                            "src/pos_client.c"
                     INCLUDE_DIRS "include"
-                    REQUIRES driver esp_timer esp_adc)
+                    REQUIRES driver esp_timer esp_adc esp_wifi nvs_flash esp_netif esp_event)

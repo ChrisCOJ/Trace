@@ -16,9 +16,11 @@
 #include "../include/table_fsm.h"
 #include "../include/trace_scheduler.h"
 #include "../include/user_interface.h"
+#include "../include/ui_screens.h"
 #include "../include/touch_controller_util.h"
 #include "../include/haptic_driver.h"
 #include "../include/battery_monitor.h"
+#include "../include/pos_client.h"
 
 
 #define SYS_EN_GPIO 41
@@ -30,6 +32,7 @@ void scheduler_tick_task(void *arg) {
 
     while (1) {
         time_ms current_time_ms = get_time();
+        pos_client_drain_events(current_time_ms);
         trace_system_tick(current_time_ms);
         vTaskDelay(pdMS_TO_TICKS(500));
     }
@@ -61,12 +64,15 @@ void app_main(void) {
     scheduler_config system_config = {0};
     trace_system_init(&system_config);
 
+    /* POS client — WiFi init and receive task */
+    pos_client_start();
+
     /* Battery monitor */
     battery_monitor_init();
 
     /* Display and UI */
     display_spi_ctx display_context = display_init();
-    ui_draw_layout(display_context.dev_handle);
+    ui_draw_grid(display_context.dev_handle);
 
     /* Runtime tasks */
     xTaskCreate(ui_task, "ui_task", 4096, &display_context, 5, NULL);

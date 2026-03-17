@@ -33,11 +33,11 @@ typedef enum {
 static const float TASK_BASE_PRIORITY[7] = {
     [SERVE_WATER]   = 3.0f,
     [TAKE_ORDER]    = 5.0f,
-    [PREPARE_ORDER] = 5.0f,
-    [SERVE_ORDER]   = 7.0f,
-    [MONITOR_TABLE] = 2.0f,
+    [PREPARE_ORDER] = 6.0f,
+    [SERVE_ORDER]   = 5.0f,
+    [MONITOR_TABLE] = 1.0f,
     [PRESENT_BILL]  = 5.0f,
-    [CLEAR_TABLE]   = 1.0f,
+    [CLEAR_TABLE]   = 2.0f,
 };
 
 // Task time limits

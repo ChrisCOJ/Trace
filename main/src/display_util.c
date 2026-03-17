@@ -13,6 +13,7 @@
 
 #define X_START 0
 #define Y_START 20
+#define SPI_CLOCK_SPEED      80 * 1000 * 1000
 
 
 static const char *TAG_DISPLAY = "display";
@@ -262,7 +263,7 @@ display_spi_ctx display_init(void) {
     };
 
     spi_device_interface_config_t device_config = {
-        .clock_speed_hz = 8 * 1000 * 1000,
+        .clock_speed_hz = SPI_CLOCK_SPEED,
         .mode           = 0,
         .spics_io_num    = CHIP_SELECT,
         .queue_size      = 7,

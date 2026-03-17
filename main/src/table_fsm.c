@@ -9,16 +9,6 @@ static inline void enter_state(table_context *table, table_state next, time_ms c
 }
 
 
-void fsm_force_take_order(table_context *table, time_ms current_time) {
-    enter_state(table, TABLE_READY_FOR_ORDER, current_time);
-}
-
-
-void fsm_force_bill_requested(table_context *table, time_ms current_time) {
-    enter_state(table, TABLE_REQUESTED_BILL, current_time);
-}
-
-
 bool table_apply_event(table_context *table, fsm_transition_event event, time_ms current_time) {
     table_state prev = table->state;
 
@@ -55,6 +45,9 @@ bool table_apply_event(table_context *table, fsm_transition_event event, time_ms
             }
             else if (event == EVENT_TAKE_ORDER_EARLY_OR_REPEAT) {
                 enter_state(table, TABLE_READY_FOR_ORDER, current_time);
+            }
+            else if (event == EVENT_POS_ORDER_READY) {
+                enter_state(table, TABLE_WAITING_FOR_ORDER, current_time);
             }
             break;
 
