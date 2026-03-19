@@ -155,7 +155,7 @@ static ui_action decode_touch_main(uint16_t x, uint16_t y, ui_snapshot snap) {
         return UI_ACTION_COMPLETE;
     }
 
-    if (point_in_rect(x, y, MAIN_TAKEORDER_BTN)) {
+    if (point_in_rect(x, y, MAIN_TAKEORDER_BTN) && kind == MONITOR_TABLE) {
         return UI_ACTION_TAKE_ORDER;
     }
 

@@ -10,10 +10,10 @@
 /* --- Default scheduler weights --- */
 #define BASE_PRIORITY_WEIGHT        1.0f
 #define URGENCY_WEIGHT              4.0f
-#define AGE_WEIGHT                  0.2f
-#define IGNORE_PENALTY_WEIGHT       1.0f
-#define PREEMPT_DELTA               0.8f
-#define MIN_DWELL_TIME_MS           1000  // 1 second
+#define AGE_WEIGHT                  0.5f
+#define IGNORE_PENALTY_WEIGHT       2.0f
+#define PREEMPT_DELTA               1.5f
+#define MIN_DWELL_TIME_MS           15000
 
 /* --- Weight caps --- */
 #define URGENCY_CAP          10.0f

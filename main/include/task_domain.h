@@ -6,11 +6,10 @@
 #include "types.h"
 
 
-#define SNOOZE_DURATION     30000       // Amount of time a task will be supressed when ignored in ms (30 seconds)
-
-// #define TEST_MODE       // Remove once testing is done
+#define SNOOZE_DURATION     120000       // Amount of time a task will be supressed when ignored in ms
 
 
+// #define TEST_MODE
 #ifdef TEST_MODE
 #define TIME_SCALE 1000  // 1 second
 #else
@@ -34,7 +33,7 @@ static const float TASK_BASE_PRIORITY[7] = {
     [SERVE_WATER]   = 3.0f,
     [TAKE_ORDER]    = 5.0f,
     [PREPARE_ORDER] = 6.0f,
-    [SERVE_ORDER]   = 5.0f,
+    [SERVE_ORDER]   = 6.0f,
     [MONITOR_TABLE] = 1.0f,
     [PRESENT_BILL]  = 5.0f,
     [CLEAR_TABLE]   = 2.0f,
