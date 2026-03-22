@@ -82,7 +82,7 @@ const char *task_kind_to_str(task_kind kind) {
     switch (kind) {
         case SERVE_WATER:   return "SERVE WATER";
         case TAKE_ORDER:    return "TAKE ORDER";
-        case PREPARE_ORDER: return "PREAPARE ORDER";
+        case PREPARE_ORDER: return "PREPARE ORDER";
         case SERVE_ORDER:   return "SERVE ORDER";
         case MONITOR_TABLE: return "MONITOR TABLE";
         case PRESENT_BILL:  return "PRESENT BILL";

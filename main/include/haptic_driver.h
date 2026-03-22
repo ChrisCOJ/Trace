@@ -7,6 +7,7 @@
 
 esp_err_t drv2605l_init(void);
 esp_err_t drv2605l_play_effect(uint8_t effect_id);
+esp_err_t drv2605l_play_urgent_pattern(void);
 
 
 #endif

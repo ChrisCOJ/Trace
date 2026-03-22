@@ -125,8 +125,8 @@ void draw_button(spi_device_handle_t display, rect r, const char *label, btn_sty
             break;
         case BTN_DANGER:
             fill   = SECONDARY_ACCENT_COLOR;
-            border = DANGER_COLOR;
-            text   = DANGER_COLOR;
+            border = ORANGE;
+            text   = WHITE;
             break;
         default: /* BTN_DISABLED */
             fill   = DARK_GREY;
@@ -160,7 +160,7 @@ void draw_button_bill(spi_device_handle_t display) {
 }
 
 void draw_button_ignore(spi_device_handle_t display) {
-    draw_button(display, MAIN_IGNORE_BTN, "Ignore", BTN_SECONDARY);
+    draw_button(display, MAIN_IGNORE_BTN, "Ignore", BTN_DANGER);
 }
 
 void draw_button_take_order(spi_device_handle_t display) {
@@ -200,7 +200,7 @@ void restore_button(spi_device_handle_t display, ui_action act, uint8_t sel_tabl
         case UI_ACTION_COMPLETE:
             draw_button(display, MAIN_COMPLETE_BTN,  "Complete",   BTN_PRIMARY);   break;
         case UI_ACTION_IGNORE:
-            draw_button(display, MAIN_IGNORE_BTN,    "Ignore",     BTN_SECONDARY); break;
+            draw_button(display, MAIN_IGNORE_BTN,    "Ignore",     BTN_DANGER);    break;
         case UI_ACTION_BILL:
             draw_button(display, MAIN_BILL_BTN,      "Bill",       BTN_SECONDARY); break;
         case UI_ACTION_TAKE_ORDER:

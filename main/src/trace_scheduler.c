@@ -8,7 +8,6 @@
 
 
 /* --- Default scheduler weights --- */
-//
 #define BASE_PRIORITY_WEIGHT        1.0f
 #define URGENCY_WEIGHT              4.0f
 #define AGE_WEIGHT                  0.5f

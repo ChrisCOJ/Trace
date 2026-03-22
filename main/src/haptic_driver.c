@@ -24,6 +24,10 @@
 #define REG_LIB_SEL         0x03
 #define REG_WAVESEQ1        0x04
 #define REG_WAVESEQ2        0x05
+#define REG_WAVESEQ3        0x06
+#define REG_WAVESEQ4        0x07
+#define REG_WAVESEQ5        0x08
+#define REG_WAVESEQ6        0x09
 #define REG_GO              0x0C
 #define REG_FEEDBACK        0x1A
 #define REG_CONTROL3        0x1D
@@ -100,6 +104,23 @@ esp_err_t drv2605l_play_effect(uint8_t effect_id) {
 
     err = drv2605l_write_reg(REG_WAVESEQ2, 0);
     if (err != ESP_OK) return err;
+
+    err = drv2605l_write_reg(REG_GO, 1);
+    return err;
+}
+
+
+/* Three strong clicks with 50 ms gaps — used when a task is critically overdue. */
+esp_err_t drv2605l_play_urgent_pattern(void) {
+    esp_err_t err;
+
+    // 0x85 = wait time flag (bit 7) | 5 units of 10 ms = 50 ms pause
+    err = drv2605l_write_reg(REG_WAVESEQ1, 1);     if (err != ESP_OK) return err;
+    err = drv2605l_write_reg(REG_WAVESEQ2, 0x85);  if (err != ESP_OK) return err;
+    err = drv2605l_write_reg(REG_WAVESEQ3, 1);     if (err != ESP_OK) return err;
+    err = drv2605l_write_reg(REG_WAVESEQ4, 0x85);  if (err != ESP_OK) return err;
+    err = drv2605l_write_reg(REG_WAVESEQ5, 1);     if (err != ESP_OK) return err;
+    err = drv2605l_write_reg(REG_WAVESEQ6, 0);     if (err != ESP_OK) return err;
 
     err = drv2605l_write_reg(REG_GO, 1);
     return err;

@@ -20,9 +20,9 @@
 #include "../include/table_fsm.h"
 
 
-#define WIFI_SSID           "Deco Wi-Fi"
-#define WIFI_PASSWORD       "Gx9qjrzw9Tfj"
-#define SERVER_IP           "192.168.68.109"
+#define WIFI_SSID           "56ws-guest" // "Deco Wi-Fi"
+#define WIFI_PASSWORD       "goodwine@56!" // "Gx9qjrzw9Tfj"
+#define SERVER_IP           "10.10.10.188" // "192.168.68.109"
 #define SERVER_PORT         5050
 
 #define RECONNECT_DELAY_MS  30000

@@ -161,7 +161,7 @@ void table_fsm_tick(table_context *table, time_ms current_time) {
 
     switch (table->state) {
         case TABLE_DINING:
-            if (dt >= 1 * 60 * 1000) {  // ms
+            if (dt >= 15 * TIME_SCALE) {
                 table_apply_event(table, TIMEOUT_PERIODIC_CHECKIN, current_time);
             }
             break;

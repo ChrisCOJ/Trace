@@ -67,13 +67,21 @@ static void ui_update_snapshot_from_system() {
         UI_SNAPSHOT.task_id = INVALID_TASK_ID;
         UI_SNAPSHOT.table_number = 0;
         UI_SNAPSHOT.task_kind = 0;
+        UI_SNAPSHOT.urgency_level = 0;
         return;
+    }
+
+    time_ms now = get_time();
+    uint8_t urgency_level = 0;
+    if (now > t->time_limit) {
+        urgency_level = ((now - t->time_limit) >= (5 * TIME_SCALE)) ? 2 : 1;
     }
 
     UI_SNAPSHOT.has_task = true;
     UI_SNAPSHOT.task_id = t->id;
     UI_SNAPSHOT.table_number = t->table_number;
     UI_SNAPSHOT.task_kind = t->kind;
+    UI_SNAPSHOT.urgency_level = urgency_level;
 }
 
 
@@ -208,10 +216,65 @@ void ui_task(void *arg) {
     time_ms corner_hold_start_ms = 0;
     bool sleep_triggered_this_hold = false;
 
+    // Haptic + wake state for task-change, urgency-1, and urgency-2 notifications
+    bool urgent_notified = false;
+    bool urgent_level1_notified = false;
+    bool task_change_notified = false;
+    task_id last_urgent_task_id = UNINITIALISED_TASK_ID;
+
     while (1) {
         time_ms now = get_time();
         uint16_t x = 0, y = 0;
         bool pressed = read_touch_point(&x, &y);
+
+        // --- Haptic notifications (run regardless of sleep state) ---
+        // Any haptic trigger also wakes the display.
+        {
+#define WAKE_IF_SLEEPING() do { \
+    if (display_sleeping) { \
+        display_sleeping = false; \
+        display_backlight_set(true); \
+        last_activity_ms = now; \
+    } \
+} while (0)
+
+            const task *active = system_get_active_task();
+            if (active) {
+                if (!task_id_equal(active->id, last_urgent_task_id)) {
+                    // New task arrived — single click + wake
+                    if (UI_TASK_STATE == UI_TASK_STATE_READY ||
+                        UI_TASK_STATE == UI_TASK_STATE_IDLE) {
+                        drv2605l_play_effect(1);
+                        WAKE_IF_SLEEPING();
+                    }
+                    urgent_notified = false;
+                    urgent_level1_notified = false;
+                    task_change_notified = true;
+                    last_urgent_task_id = active->id;
+                }
+                bool is_overdue = (now > active->time_limit);
+                bool is_critically_overdue = is_overdue &&
+                                             (now - active->time_limit) >= (5 * TIME_SCALE);
+                // Urgency level 1: task just became overdue — single click + wake
+                if (is_overdue && !urgent_level1_notified) {
+                    drv2605l_play_effect(1);
+                    urgent_level1_notified = true;
+                    WAKE_IF_SLEEPING();
+                }
+                // Urgency level 2: critically overdue (≥5 min) — triple click + wake
+                if (is_critically_overdue && !urgent_notified) {
+                    drv2605l_play_urgent_pattern();
+                    urgent_notified = true;
+                    WAKE_IF_SLEEPING();
+                }
+            } else {
+                urgent_notified = false;
+                urgent_level1_notified = false;
+                task_change_notified = false;
+                last_urgent_task_id = UNINITIALISED_TASK_ID;
+            }
+#undef WAKE_IF_SLEEPING
+        }
 
         // --- Wake from sleep on any touch edge ---
         if (display_sleeping) {
@@ -275,9 +338,6 @@ void ui_task(void *arg) {
         if (UI_MODE == UI_MODE_MAIN && UI_TASK_STATE != UI_TASK_STATE_IN_PROGRESS) {
             if (!task_id_equal(snap.task_id, prev_task_id)) {
                 if (snap.has_task) {
-                    if (UI_TASK_STATE == UI_TASK_STATE_READY || UI_TASK_STATE == UI_TASK_STATE_IDLE) {
-                        drv2605l_play_effect(1);
-                    }
                     UI_TASK_STATE = UI_TASK_STATE_READY;
                     UI_LOCKED_TASK_ID = snap.task_id;
                 } else {
@@ -351,7 +411,16 @@ void ui_task(void *arg) {
                     if (act == UI_ACTION_TABLE_INFO_BACK) {
                         UI_MODE = UI_MODE_TABLE_GRID;
                         ui_draw_grid(display.dev_handle);
-                    } else if (act != UI_ACTION_NONE) {
+                    } else if (act == UI_ACTION_TABLE_INFO_TAKE_ORDER &&
+                               state_can_take_order(system_get_table_state(SELECTED_TABLE))) {
+                        draw_button_highlight(display.dev_handle, act);
+                        PENDING_ACTION = act;
+                    } else if (act == UI_ACTION_TABLE_INFO_BILL &&
+                               state_can_request_bill(system_get_table_state(SELECTED_TABLE))) {
+                        draw_button_highlight(display.dev_handle, act);
+                        PENDING_ACTION = act;
+                    } else if (act == UI_ACTION_TABLE_INFO_UNDO &&
+                               table_can_undo(system_get_table(SELECTED_TABLE))) {
                         draw_button_highlight(display.dev_handle, act);
                         PENDING_ACTION = act;
                     }

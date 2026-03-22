@@ -158,6 +158,7 @@ typedef struct {
     task_id task_id;
     task_kind task_kind;
     uint8_t table_number;
+    uint8_t urgency_level;   // 0 = normal, 1 = overdue, 2 = critically overdue (>= 5 min past deadline)
 } ui_snapshot;
 
 

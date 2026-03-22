@@ -27,7 +27,7 @@ static void draw_bottom_button_layout(spi_device_handle_t display_handle, bool m
         draw_button_take_order(display_handle);
     }
     else {
-        draw_button(display_handle, MAIN_IGNORE_BTN, "Ignore", has_task ? BTN_SECONDARY : BTN_DISABLED);
+        draw_button(display_handle, MAIN_IGNORE_BTN, "Ignore", has_task ? BTN_DANGER : BTN_DISABLED);
     }
 }
 
@@ -39,7 +39,7 @@ static uint16_t task_kind_tile_color(task_kind kind) {
         case TAKE_ORDER:     return YELLOW;
         case SERVE_ORDER:    return YELLOW;
         case PRESENT_BILL:   return YELLOW;
-        case PREPARE_ORDER:  return RED;
+        case PREPARE_ORDER:  return ORANGE;
         case MONITOR_TABLE:  return GREEN;
         case CLEAR_TABLE:    return GREEN;
         default:             return DARK_GREY;
@@ -108,7 +108,10 @@ void ui_draw_main(spi_device_handle_t display, ui_snapshot snapshot, ui_task_sta
     if (snapshot.has_task) {
         const char *task_kind_label = task_kind_to_str(snapshot.task_kind);
         rect task_kind_rect = {.x=0,.y=60,.w=240,.h=30};
-        draw_urgency_icon(display, task_kind_rect, strlen(task_kind_label), task_kind_tile_color(snapshot.task_kind));
+        uint16_t icon_color = (snapshot.urgency_level >= 2) ? RED :
+                              (snapshot.urgency_level == 1) ? ORANGE :
+                              task_kind_tile_color(snapshot.task_kind);
+        draw_urgency_icon(display, task_kind_rect, strlen(task_kind_label), icon_color);
         draw_label(display, task_kind_rect, task_kind_label, strlen(task_kind_label), COLOR_LABEL_CHROME, false);
 
         char task_table_label[10];
