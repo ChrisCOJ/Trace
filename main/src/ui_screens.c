@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <inttypes.h>
 
 
 
@@ -27,7 +28,7 @@ static void draw_bottom_button_layout(spi_device_handle_t display_handle, bool m
         draw_button_take_order(display_handle);
     }
     else {
-        draw_button(display_handle, MAIN_IGNORE_BTN, "Ignore", has_task ? BTN_DANGER : BTN_DISABLED);
+        draw_button(display_handle, MAIN_IGNORE_BTN, "Ignore", has_task ? BTN_WARNING : BTN_DISABLED);
     }
 }
 
@@ -95,45 +96,137 @@ static void format_elapsed(time_ms elapsed_ms, char *buf, size_t len) {
 
 
 /* ------------------- API ------------------- */
-void ui_draw_main(spi_device_handle_t display, ui_snapshot snapshot, ui_task_state state) {
+void ui_draw_main(spi_device_handle_t display, ui_snapshot snapshot) {
     const uint16_t COLOR_TOPBAR = GREY;
-    const char *tables_label = "Tables";
 
     display_fill(display, BG);
 
-    // top bar (chrome — white on grey)
-    draw_filled_rect(display, MAIN_TABLES_BTN.x, MAIN_TABLES_BTN.y, MAIN_TABLES_BTN.w, MAIN_TABLES_BTN.h, COLOR_TOPBAR, 10);
+    // Top bar: "Tables N" badge shows count of tables with active tasks
+    uint8_t active_tables = 0;
+    for (uint8_t i = 0; i < NUM_OF_TABLES; i++) {
+        if (system_get_current_task_kind_for_table(i) != TASK_NOT_APPLICABLE) {
+            active_tables++;
+        }
+    }
+
+    char tables_label[12];
+    if (active_tables > 0) {
+        snprintf(tables_label, sizeof(tables_label), "Tables %u", active_tables);
+    } else {
+        snprintf(tables_label, sizeof(tables_label), "Tables");
+    }
+
+    draw_filled_rect(display,
+                     MAIN_TABLES_BTN.x,
+                     MAIN_TABLES_BTN.y,
+                     MAIN_TABLES_BTN.w,
+                     MAIN_TABLES_BTN.h,
+                     COLOR_TOPBAR,
+                     10);
     draw_label(display, MAIN_TABLES_BTN, tables_label, strlen(tables_label), COLOR_LABEL_CHROME, false);
+
+    draw_pending_badge(display, snapshot.pending_count, snapshot.critical_count);
 
     if (snapshot.has_task) {
         const char *task_kind_label = task_kind_to_str(snapshot.task_kind);
-        rect task_kind_rect = {.x=0,.y=60,.w=240,.h=30};
+
+        const rect task_kind_rect = {
+            .x = 0,
+            .y = MAIN_TASK_KIND_Y,
+            .w = MAIN_TASK_KIND_W,
+            .h = MAIN_TASK_KIND_H
+        };
+
         uint16_t icon_color = (snapshot.urgency_level >= 2) ? RED :
                               (snapshot.urgency_level == 1) ? ORANGE :
                               task_kind_tile_color(snapshot.task_kind);
+
         draw_urgency_icon(display, task_kind_rect, strlen(task_kind_label), icon_color);
         draw_label(display, task_kind_rect, task_kind_label, strlen(task_kind_label), COLOR_LABEL_CHROME, false);
 
         char task_table_label[10];
-        snprintf(task_table_label, sizeof(task_table_label), "Table %d", snapshot.table_number + 1);
-        draw_label(display, (rect){.x=0,.y=70+CHAR_HEIGHT*UI_TEXT_SCALE,.w=240,.h=30}, task_table_label, strlen(task_table_label), COLOR_LABEL_CHROME, false);
-    }
-    else {
-        const char *task_label = "NONE";
-        draw_label(display, (rect){.x=0,.y=70,.w=240,.h=30}, task_label, strlen(task_label), COLOR_LABEL_CHROME, false);
-    }
+        snprintf(task_table_label, sizeof(task_table_label), "Table %u", snapshot.table_number + 1);
 
-    if (state == UI_TASK_STATE_IN_PROGRESS) {
-        draw_button_complete(display);
-    } else if (state == UI_TASK_STATE_READY) {
-        draw_button_start(display);
+        draw_label(display,
+                   (rect){
+                       .x = 0,
+                       .y = MAIN_TASK_TABLE_Y,
+                       .w = MAIN_TASK_TABLE_W,
+                       .h = MAIN_TASK_TABLE_H
+                   },
+                   task_table_label,
+                   strlen(task_table_label),
+                   COLOR_LABEL_CHROME,
+                   false);
+
+        // Time remaining / overdue indicator
+        time_ms now = get_time();
+        char time_str[12];
+        uint16_t time_color;
+
+        if (now <= snapshot.deadline) {
+            uint32_t s = (snapshot.deadline - now) / 1000;
+            snprintf(time_str, sizeof(time_str), "-%" PRIu32 "m %02" PRIu32 "s", s / 60, s % 60);
+            time_color = LIGHT_GREY;
+        } else {
+            uint32_t s = (now - snapshot.deadline) / 1000;
+            snprintf(time_str, sizeof(time_str), "+%" PRIu32 "m %02" PRIu32 "s", s / 60, s % 60);
+            time_color = (snapshot.urgency_level >= 2) ? RED : ORANGE;
+        }
+
+        uint16_t tx = UI_CENTER_X
+                    - (uint16_t)(strlen(time_str) * CHAR_WIDTH * UI_TEXT_SCALE / 2);
+
+        draw_text(display, tx, UI_MAIN_TIME_Y, time_str, time_color, UI_TEXT_SCALE);
     } else {
-        draw_button(display, MAIN_START_BTN, "Start", BTN_DISABLED);
+        const char *task_label = "NONE";
+        draw_label(display,
+                   (rect){
+                       .x = 0,
+                       .y = MAIN_NO_TASK_Y,
+                       .w = MAIN_NO_TASK_W,
+                       .h = MAIN_NO_TASK_H
+                   },
+                   task_label,
+                   strlen(task_label),
+                   COLOR_LABEL_CHROME,
+                   false);
     }
 
-    draw_bottom_button_layout(display, snapshot.has_task && snapshot.task_kind == MONITOR_TABLE, snapshot.has_task);
+    if (snapshot.has_task) {
+        draw_button_complete(display);
+    } else {
+        draw_button(display, MAIN_COMPLETE_BTN, "Complete", BTN_DISABLED);
+    }
+
+    draw_bottom_button_layout(display,
+                              snapshot.has_task && snapshot.task_kind == MONITOR_TABLE,
+                              snapshot.has_task);
 
     draw_battery_icon(display, battery_monitor_get_bars());
+}
+
+
+void ui_draw_main_time(spi_device_handle_t display, ui_snapshot snapshot) {
+    if (!snapshot.has_task) return;
+
+    // Erase previous time string
+    draw_filled_rect(display, UI_MAIN_TIME_X, UI_MAIN_TIME_Y, UI_MAIN_TIME_WIDTH, CHAR_HEIGHT * UI_TEXT_SCALE, BG, 0);
+
+    time_ms current_time_ms = get_time();
+    char time_str[12];
+    uint16_t time_color;
+    if (current_time_ms <= snapshot.deadline) {
+        uint32_t seconds = (snapshot.deadline - current_time_ms) / 1000;
+        snprintf(time_str, sizeof(time_str), "-%" PRIu32 "m %02" PRIu32 "s", seconds / 60, seconds % 60);
+        time_color = LIGHT_GREY;
+    } else {
+        uint32_t seconds = (current_time_ms - snapshot.deadline) / 1000;
+        snprintf(time_str, sizeof(time_str), "+%" PRIu32 "m %02" PRIu32 "s", seconds / 60, seconds % 60);
+        time_color = (snapshot.urgency_level >= 2) ? RED : ORANGE;
+    }
+    uint16_t tx = UI_CENTER_X - (uint16_t)(strlen(time_str) * CHAR_WIDTH * UI_TEXT_SCALE / 2);
+    draw_text(display, tx, UI_MAIN_TIME_Y, time_str, time_color, UI_TEXT_SCALE);
 }
 
 
@@ -151,6 +244,7 @@ rect table_tile_rect(uint8_t index) {
 
 
 void ui_draw_grid(spi_device_handle_t display) {
+    display_fill(display, BG);
     const uint8_t num_pages   = (NUM_OF_TABLES + TABLES_PER_PAGE - 1) / TABLES_PER_PAGE;
     const uint8_t page_start  = UI_GRID_PAGE * TABLES_PER_PAGE;
 
@@ -158,11 +252,11 @@ void ui_draw_grid(spi_device_handle_t display) {
     const char *prev_label  = "< Prev";
     const char *next_label  = "Next >";
 
-    display_fill(display, BG);
-
     draw_back_icon(display);
     draw_label(display, (rect){.x=0,.y=0,.w=UI_SCREEN_W,.h=UI_TOPBAR_H},
                title_label, strlen(title_label), COLOR_LABEL_CHROME, false);
+
+    time_ms now = get_time();
 
     for (uint8_t slot = 0; slot < TABLES_PER_PAGE; ++slot) {
         uint8_t table_index = page_start + slot;
@@ -173,8 +267,20 @@ void ui_draw_grid(spi_device_handle_t display) {
         uint16_t color_tile       = (tile_state == TABLE_DINING) ? GREEN : task_kind_tile_color(tile_task_kind);
         uint16_t label_color = (color_tile == DARK_GREY || color_tile == RED) ? WHITE : BLACK;
 
+        // Overdue indicator: orange or red border drawn as outer rect with smaller inner fill
+        task *tbl_task = system_get_current_task_pointer_for_table(table_index);
+        uint16_t overdue_color = 0;
+        if (tbl_task && now > tbl_task->time_limit) {
+            overdue_color = ((now - tbl_task->time_limit) >= (5 * TIME_SCALE)) ? RED : ORANGE;
+        }
+
         rect tile = table_tile_rect(slot);
-        draw_filled_rect(display, tile.x, tile.y, tile.w, tile.h, color_tile, 10);
+        if (overdue_color) {
+            draw_filled_rect(display, tile.x, tile.y, tile.w, tile.h, overdue_color, 10);
+            draw_filled_rect(display, tile.x + 3, tile.y + 3, tile.w - 6, tile.h - 6, color_tile, 7);
+        } else {
+            draw_filled_rect(display, tile.x, tile.y, tile.w, tile.h, color_tile, 10);
+        }
 
         char table_label[4];
         snprintf(table_label, sizeof(table_label), "T%u", table_index + 1);
@@ -237,4 +343,35 @@ void draw_active_table_page(spi_device_handle_t display_handle, uint8_t table_in
                 undo_enabled       ? BTN_SECONDARY : BTN_DISABLED);
 
     draw_battery_icon(display_handle, battery_monitor_get_bars());
+}
+
+
+void ui_draw_switch_prompt(spi_device_handle_t display, ui_snapshot snap) {
+    draw_filled_rect(display, 0, UI_CONFIRM_OVERLAY_Y, UI_SCREEN_W, UI_CONFIRM_OVERLAY_H, DARK_GREY, 0);
+
+    const char *header = "Urgent Task";
+    rect header_rect = { .x = 0, .y = UI_CONFIRM_OVERLAY_Y + 30, .w = UI_SCREEN_W, .h = 25 };
+    draw_urgency_icon(display, header_rect, strlen(header), RED);
+    draw_label(display, header_rect, header, strlen(header), RED, false);
+
+    const char *kind_str = task_kind_to_str(snap.critical_task_kind);
+    rect kind_rect = { .x = 0, .y = UI_CONFIRM_OVERLAY_Y + 80, .w = UI_SCREEN_W, .h = 25 };
+    draw_label(display, kind_rect, kind_str, strlen(kind_str), WHITE, false);
+
+    char table_label[10];
+    snprintf(table_label, sizeof(table_label), "Table %d", snap.critical_table_number + 1);
+    rect table_rect = { .x = 0, .y = UI_CONFIRM_OVERLAY_Y + 115, .w = UI_SCREEN_W, .h = 25 };
+    draw_label(display, table_rect, table_label, strlen(table_label), LIGHT_GREY, false);
+
+    time_ms now = get_time();
+    if (now > snap.critical_deadline) {
+        uint32_t s = (now - snap.critical_deadline) / 1000;
+        char overdue_str[14];
+        snprintf(overdue_str, sizeof(overdue_str), "+%um %02us", (unsigned)(s / 60), (unsigned)(s % 60));
+        rect time_rect = { .x = 0, .y = UI_CONFIRM_OVERLAY_Y + 150, .w = UI_SCREEN_W, .h = 20 };
+        draw_label(display, time_rect, overdue_str, strlen(overdue_str), ORANGE, false);
+    }
+
+    draw_button(display, CONFIRM_ALLOW_BTN, "Allow", BTN_PRIMARY);
+    draw_button(display, CONFIRM_DENY_BTN,  "Deny",  BTN_DANGER);
 }

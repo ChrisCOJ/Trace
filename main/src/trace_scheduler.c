@@ -7,292 +7,348 @@
 #include "esp_log.h"
 
 
-/* --- Default scheduler weights --- */
+/* --- Base scoring weights and caps --- */
 #define BASE_PRIORITY_WEIGHT        1.0f
-#define URGENCY_WEIGHT              4.0f
-#define AGE_WEIGHT                  0.5f
+#define URGENCY_WEIGHT              2.0f
+#define AGE_WEIGHT                  0.4f
 #define IGNORE_PENALTY_WEIGHT       2.0f
-#define PREEMPT_DELTA               1.5f
+#define URGENCY_CAP                 10.0f
+#define AGE_CAP                     7.0f
+#define URGENCY_GROWTH_RATE         1.0f       // units per minute overdue
+#define AGE_GROWTH_RATE             1.0f       // units per minute overdue
+
+/* --- Switch prompt gate --- */
+#define PREEMPT_DELTA               2.0f
 #define MIN_DWELL_TIME_MS           15000
 
-/* --- Weight caps --- */
-#define URGENCY_CAP          10.0f
-#define AGE_CAP              7.0f
+/* --- Challenger adjustment defaults --- */
+#define ZONE_BATCH_BONUS            1.0f
+#define CROSS_ZONE_PENALTY          1.0f
 
-/* --- Growth rate (smaller number = faster growth over time) --- */
-#define URGENCY_GROWTH_RATE  1      // Grows by 1 every minute the task is overdue.
-#define AGE_GROWTH_RATE      2      // Grows by 1 every 2 minutes since the task was created.
 
 static const char *TAG = "trace_sched";
 
 
-/* ----------------------------- Internals ----------------------------- */
+typedef struct {
+    task_id best_id;
+    float best_score;
+    uint8_t pending_count;
+    uint8_t critical_count;
+    task_id top_critical_id;
+    float top_critical_score;
+} scheduler_scan_result;
 
-static inline void scheduler_clear_active(scheduler *s, time_ms current_time_ms) {
-    s->has_active_task = false;
-    s->active_task_id.index = UINT16_MAX;
-    s->active_task_id.generation = 0;
-    s->task_active_since = current_time_ms;
+
+/* ------------------------------------------------------------------ */
+/* Zone model                                                          */
+/* ------------------------------------------------------------------ */
+
+typedef enum { ZONE_A, ZONE_B, ZONE_UNKNOWN } table_zone;
+
+static table_zone zone_of_table(uint8_t table_number) {
+    if ((table_number >= 1 && table_number <= 10) || (table_number >= 18 && table_number <= 24)) return ZONE_A;
+    if (table_number >= 11 && table_number <= 17) return ZONE_B;
+    return ZONE_UNKNOWN;
 }
 
 
-static float calculate_task_score(const scheduler *scheduler_instance, const task *task_instance, time_ms current_time) {
-    float base_priority = (float)task_instance->base_priority;
+/* ------------------------------------------------------------------ */
+/* Batch-compatibility matrix                                          */
+/*   BATCH_COMPAT[active_kind][challenger_kind]                       */
+/*   Scales zone_batch_bonus: 1.0=full, 0.5=partial, 0.25=marginal,  */
+/*   0.0=incompatible (different area/equipment/workflow)             */
+/* ------------------------------------------------------------------ */
+/*                       SW      TO      PO      SO      MT      PB      CT  */
+static const float BATCH_COMPAT[7][7] = {
+    [SERVE_WATER]   = { 1.00f,  1.00f,  0.00f,  0.25f,  1.00f,  0.25f,  0.00f },
+    [TAKE_ORDER]    = { 1.00f,  1.00f,  0.00f,  0.50f,  1.00f,  1.00f,  0.00f },
+    [PREPARE_ORDER] = { 0.00f,  0.00f,  1.00f,  1.00f,  0.00f,  0.00f,  0.00f },
+    [SERVE_ORDER]   = { 0.25f,  0.50f,  0.00f,  1.00f,  0.50f,  0.50f,  0.00f },
+    [MONITOR_TABLE] = { 1.00f,  1.00f,  0.00f,  0.50f,  1.00f,  0.50f,  0.00f },
+    [PRESENT_BILL]  = { 0.25f,  1.00f,  0.00f,  0.50f,  0.50f,  1.00f,  0.50f },
+    [CLEAR_TABLE]   = { 0.00f,  0.25f,  0.00f,  0.00f,  0.00f,  0.50f,  1.00f },
+};
 
-    float overdue_ms =
-        (current_time > task_instance->time_limit) ?
-        (float)(current_time - task_instance->time_limit) : 0.0f;
 
+/* ------------------------------------------------------------------ */
+/* Internal helpers                                                   */
+/* ------------------------------------------------------------------ */
+
+static inline void scheduler_clear_active(scheduler *s, time_ms current_time) {
+    s->has_active_task = false;
+    s->active_task_id.index      = UINT16_MAX;
+    s->active_task_id.generation = 0;
+    s->task_active_since = current_time;
+}
+
+
+static float compute_task_urgency(const task *t, time_ms current_time) {
+    float overdue_ms = (current_time > t->time_limit)
+        ? (float)(current_time - t->time_limit) : 0.0f;
     float urgency = overdue_ms / (60000.0f * URGENCY_GROWTH_RATE);
-    if (urgency > URGENCY_CAP) urgency = URGENCY_CAP;
+    return (urgency > URGENCY_CAP) ? URGENCY_CAP : urgency;
+}
 
-    float age_ms =
-        (current_time > task_instance->created_at) ?
-        (float)(current_time - task_instance->created_at) : 0.0f;
 
+static float task_base_score(const scheduler *s, const task *t, time_ms current_time) {
+    float urgency = compute_task_urgency(t, current_time);
+
+    float age_ms = (current_time > t->created_at)
+        ? (float)(current_time - t->created_at) : 0.0f;
     float age = age_ms / (60000.0f * AGE_GROWTH_RATE);
     if (age > AGE_CAP) age = AGE_CAP;
 
-    float ignore_penalty = (float)task_instance->ignore_count;
+    float score = s->cfg.base_priority_weight * (float)t->base_priority
+                + s->cfg.urgency_weight        * urgency
+                + s->cfg.age_weight            * age
+                - s->cfg.ignore_penalty_weight * (float)t->ignore_count;
 
-    float score = scheduler_instance->cfg.base_priority_weight * base_priority +
-                  scheduler_instance->cfg.urgency_weight * urgency +
-                  scheduler_instance->cfg.age_weight * age -
-                  scheduler_instance->cfg.ignore_penalty_weight * ignore_penalty;
+    ESP_LOGD(TAG, "base id=%u bp=%.2f age=%.2f urg=%.2f score=%.2f",
+        t->id.index, (double)t->base_priority, (double)age, (double)urgency, (double)score);
 
-    ESP_LOGD(TAG,
-        "id=%u bp=%.3f now=%ld created=%ld due=%ld age_ms=%ld overdue_ms=%ld age=%.3f urg=%.3f score=%.3f",
-        task_instance->id.index,
-        task_instance->base_priority,
-        (long)current_time,
-        (long)task_instance->created_at,
-        (long)task_instance->time_limit,
-        (long)((current_time > task_instance->created_at) ? (current_time - task_instance->created_at) : 0),
-        (long)((current_time > task_instance->time_limit) ? (current_time - task_instance->time_limit) : 0),
-        age,
-        urgency,
-        score
-    );
-    
     return score;
 }
 
 
-static time_ms recompute_dwell_time(const scheduler *scheduler) {
-    time_ms effective_min_dwell_time = scheduler->cfg.min_dwell_time_ms + 
-                                       scheduler->cfg.extra_dwell_ms_at_max_exhaustion *
-                                       scheduler->human_state_indicator;
+/* Zone-batch adjustment applied to challenger tasks to influence
+   next-task selection at natural breakpoints. */
+static float challenger_zone_adjustment(const scheduler *s,
+                                        const task *active_task,
+                                        const task *challenger_task)
+{
+    if (!active_task) return 0.0f;
 
-    return effective_min_dwell_time;
-}
+    float adjustment = 0.0f;
+    table_zone active_zone     = zone_of_table(active_task->table_number);
+    table_zone challenger_zone = zone_of_table(challenger_task->table_number);
 
-
-static float recompute_preempt_delta(const scheduler *scheduler) {
-    float effective_preempt_delta = scheduler->cfg.preempt_delta + 
-                                    scheduler->cfg.extra_delta_at_max_exhaustion * 
-                                    scheduler->human_state_indicator;
-
-    return effective_preempt_delta;
-}
-
-
-static bool should_switch_task(const scheduler *scheduler, float active_task_score, float candidate_task_score, time_ms current_time) {
-    time_ms effective_min_dwell_time = recompute_dwell_time(scheduler);
-    if ((time_ms)(current_time - scheduler->task_active_since) < effective_min_dwell_time) {
-        
-        ESP_LOGI(TAG, "block dwell elapsed=%lu min=%lu",
-            (unsigned long)(current_time - scheduler->task_active_since),
-            (unsigned long)effective_min_dwell_time);
-   
-        return false;
+    if (active_zone != ZONE_UNKNOWN && challenger_zone == active_zone) {
+        int active_kind = (int)active_task->kind;
+        int challenger_kind = (int)challenger_task->kind;
+        if (active_kind < (int)TASK_NOT_APPLICABLE && challenger_kind < (int)TASK_NOT_APPLICABLE)
+            adjustment += s->cfg.zone_batch_bonus * BATCH_COMPAT[active_kind][challenger_kind];
     }
 
-    float effective_preempt_delta = recompute_preempt_delta(scheduler);
-    
-    if (!(candidate_task_score > active_task_score + effective_preempt_delta)) {
+    if (active_zone != ZONE_UNKNOWN && challenger_zone != ZONE_UNKNOWN && challenger_zone != active_zone)
+        adjustment -= s->cfg.cross_zone_penalty;
 
-        ESP_LOGI(TAG, "block margin candidate=%.2f need>%.2f (a=%.2f + d=%.2f)",
-            (double)candidate_task_score,
-            (double)(active_task_score + effective_preempt_delta),
-            (double)active_task_score,
-            (double)effective_preempt_delta);
-
-        return false;
-    }
-    
-    ESP_LOGI(TAG, "allow: switch");
-    return true;
+    return adjustment;
 }
 
 
-/* ----------------------------- API ----------------------------- */
-
-void scheduler_init(scheduler *scheduler, const scheduler_config *cfg) {
-    memset(scheduler, 0, sizeof(*scheduler));
-    if (cfg) scheduler->cfg = *cfg;
-
-    // Defaults
-    if (scheduler->cfg.base_priority_weight == 0)  scheduler->cfg.base_priority_weight = BASE_PRIORITY_WEIGHT;
-    if (scheduler->cfg.urgency_weight == 0)        scheduler->cfg.urgency_weight = URGENCY_WEIGHT;
-    if (scheduler->cfg.age_weight == 0)            scheduler->cfg.age_weight = AGE_WEIGHT;
-    if (scheduler->cfg.ignore_penalty_weight == 0) scheduler->cfg.ignore_penalty_weight = IGNORE_PENALTY_WEIGHT;
-
-    if (scheduler->cfg.preempt_delta == 0)         scheduler->cfg.preempt_delta = PREEMPT_DELTA;
-    if (scheduler->cfg.min_dwell_time_ms == 0)     scheduler->cfg.min_dwell_time_ms = MIN_DWELL_TIME_MS;
-
-    scheduler->human_state_indicator = 0.0f;
-    scheduler->has_active_task = false;
-    scheduler->task_active_since = 0;
-    scheduler->active_task_id.index = UINT16_MAX;
-    scheduler->active_task_id.generation = 0;
+static bool task_id_is_valid(task_id id) {
+    return id.index != UINT16_MAX;
 }
 
 
-/* --- Scheduler tick recalculates score of each task --- */
-
-void scheduler_tick(scheduler *scheduler_instance, task_pool *pool, time_ms current_time) {
-    /* Variables used for logging */
-    static task_id last_logged_active = { .index = UINT16_MAX, .generation = 0 };
-    bool active_changed = false;
-    /* -------------------------- */
+static bool active_task_is_usable(task *active_task) {
+    return active_task && active_task->status == TASK_ELIGIBLE;
+}
 
 
-    task_id best_task_id = { .index = UINT16_MAX, .generation = 0 };
-    float best_task_score = -FLT_MAX;
+static void scheduler_set_active_task(scheduler *sched, task_id id, time_ms now) {
+    sched->has_active_task = true;
+    sched->active_task_id = id;
+    sched->task_active_since = now;
+}
 
-    /* Scan pool for best schedulable task */
-    for (uint16_t index = 0; index < TASK_POOL_CAPACITY; ++index) {
-        task_slot *slot = &pool->slots[index];
-        if (slot->occupied == false) continue;
 
-        task *candidate_task = &slot->task_instance;
+static void scheduler_clear_critical_state(scheduler *sched) {
+    sched->critical_count = 0;
+    sched->top_critical_id = (task_id){ .index = UINT16_MAX, .generation = 0 };
+}
 
-        /* keep tasks up-to-date */
-        refresh_task(candidate_task, current_time);
 
-        if (candidate_task->status != TASK_ELIGIBLE) continue;
+static scheduler_scan_result scheduler_scan_tasks(scheduler *sched, task_pool *pool, task *active_task, float active_raw_priority, bool dwell_satisfied, time_ms current_time) {
+    scheduler_scan_result result = {
+            .best_id = { .index = UINT16_MAX, .generation = 0 },
+            .best_score = -FLT_MAX,
+            .pending_count = 0,
+            .critical_count = 0,
+            .top_critical_id = { .index = UINT16_MAX, .generation = 0 },
+            .top_critical_score = -FLT_MAX,
+        };
 
-        float candidate_score = calculate_task_score(scheduler_instance, candidate_task, current_time);
-
-        if (candidate_score > best_task_score) {
-            best_task_score = candidate_score;
-            best_task_id.index = index;
-            best_task_id.generation = slot->generation;
+    for (uint16_t i = 0; i < TASK_POOL_CAPACITY; ++i) {
+        task_slot *slot = &pool->slots[i];
+        if (!slot->occupied) {
+            continue;
         }
-    }
 
-    if (best_task_id.index == UINT16_MAX) {
-        if (scheduler_instance->has_active_task) {
-            ESP_LOGI(TAG, "no_schedulable t=%lu -> clearing active", (unsigned long)current_time);
+        task *task_inst = &slot->task_instance;
+        refresh_task(task_inst, current_time);
+
+        if (task_inst->status != TASK_ELIGIBLE) {
+            continue;
         }
-        scheduler_clear_active(scheduler_instance, current_time);
-        return;
-    }
 
-    if (!scheduler_instance->has_active_task) {
-        scheduler_instance->has_active_task = true;
-        scheduler_instance->active_task_id = best_task_id;
-        scheduler_instance->task_active_since = current_time;
-        active_changed = true;
-
-        ESP_LOGI(TAG,
-            "init_select t=%lu active=(%u,%u) score=%.2f",
-            (unsigned long)current_time,
-            (unsigned)best_task_id.index,
-            (unsigned)best_task_id.generation,
-            (double)best_task_score);
-        goto done;
-    }
-
-    task *active_task = task_pool_get(pool, scheduler_instance->active_task_id);
-    if (!active_task) {
-        /* active handle stale: take best */
-        ESP_LOGW(TAG,
-            "active_stale t=%lu switching_to_best=(%u,%u)",
-            (unsigned long)current_time,
-            (unsigned)best_task_id.index, (unsigned)best_task_id.generation);
-   
-        scheduler_instance->active_task_id = best_task_id;
-        scheduler_instance->task_active_since = current_time;
-        active_changed = true;
-        goto done;
-    }
-
-    refresh_task(active_task, current_time);
-
-    if (active_task->status != TASK_ELIGIBLE) {
-        scheduler_instance->active_task_id = best_task_id;
-        scheduler_instance->task_active_since = current_time;
-        active_changed = true;
-        goto done;
-    }
-
-    if (scheduler_instance->active_task_id.index == best_task_id.index &&
-        scheduler_instance->active_task_id.generation == best_task_id.generation) {
-        return;
-    }
-
-    float active_score =
-        calculate_task_score(scheduler_instance, active_task, current_time);
-
-
-        time_ms effective_dwell = recompute_dwell_time(scheduler_instance);
-        time_ms dwell_elapsed = (time_ms)(current_time - scheduler_instance->task_active_since);
-        float effective_delta = recompute_preempt_delta(scheduler_instance);
-        
-    ESP_LOGD(TAG,
-        "dec t=%lu active=(%u,%u) a=%.2f best=(%u,%u) b=%.2f dwell=%lu/%lu d=%.2f",
-        (unsigned long)current_time,
-        (unsigned)scheduler_instance->active_task_id.index,
-        (unsigned)scheduler_instance->active_task_id.generation,
-        (double)active_score,
-        (unsigned)best_task_id.index,
-        (unsigned)best_task_id.generation,
-        (double)best_task_score,
-        (unsigned long)dwell_elapsed,
-        (unsigned long)effective_dwell,
-        (double)effective_delta);
-        
-        
-    if (should_switch_task(scheduler_instance, active_score, best_task_score, current_time)) {
-
-        if (scheduler_instance->active_task_id.index != last_logged_active.index ||
-            scheduler_instance->active_task_id.generation != last_logged_active.generation) {
-            ESP_LOGI(TAG,
-                "SWITCH t=%lu -> active=(%u,%u)",
-                (unsigned long)current_time,
-                (unsigned)best_task_id.index,
-                (unsigned)best_task_id.generation);
-
-            last_logged_active = best_task_id;
+        bool is_active = false;
+        if (sched->has_active_task && active_task) {
+            is_active =
+                (task_inst->id.index == sched->active_task_id.index) &&
+                (task_inst->id.generation == sched->active_task_id.generation);
         }
-            
-        scheduler_instance->active_task_id = best_task_id;
-        scheduler_instance->task_active_since = current_time;
-        active_changed = true;
-    }
 
+        float raw_priority = task_base_score(sched, task_inst, current_time);
 
-    done:
-        // Log active task if task progression was triggered
-        if (active_changed) {
-            task *t = task_pool_get(pool, scheduler_instance->active_task_id);
-            if (t) {
-                ESP_LOGI(TAG,
-                    "active_now=%s (table=%u) t=%lu (%u,%u)",
-                    task_kind_to_str(t->kind),
-                    t->table_number,
-                    (unsigned long)current_time,
-                    (unsigned)scheduler_instance->active_task_id.index,
-                    (unsigned)scheduler_instance->active_task_id.generation);
-            } else {
-                ESP_LOGI(TAG,
-                    "active_now=STALE t=%lu (%u,%u)",
-                    (unsigned long)current_time,
-                    (unsigned)scheduler_instance->active_task_id.index,
-                    (unsigned)scheduler_instance->active_task_id.generation);
+        /* Zone adjustment affects next-task ranking only.
+           It must never influence the raw preemption threshold. */
+        float ranking_score = is_active
+            ? raw_priority
+            : (raw_priority + challenger_zone_adjustment(sched, active_task, task_inst));
+
+        if (ranking_score > result.best_score) {
+            result.best_score = ranking_score;
+            result.best_id = task_inst->id;
+        }
+
+        if (!is_active) {
+            result.pending_count++;
+
+            if (dwell_satisfied &&
+                raw_priority > (active_raw_priority + sched->cfg.preempt_delta)) {
+
+                result.critical_count++;
+
+                if (ranking_score > result.top_critical_score) {
+                    result.top_critical_score = ranking_score;
+                    result.top_critical_id = task_inst->id;
+                }
             }
         }
-        return;
+    }
+
+    return result;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* API                                                                 */
+/* ------------------------------------------------------------------ */
+
+void scheduler_init(scheduler *s, const scheduler_config *cfg) {
+    memset(s, 0, sizeof(*s));
+    if (cfg) s->cfg = *cfg;
+
+    if (s->cfg.base_priority_weight == 0)  s->cfg.base_priority_weight   = BASE_PRIORITY_WEIGHT;
+    if (s->cfg.urgency_weight == 0)        s->cfg.urgency_weight         = URGENCY_WEIGHT;
+    if (s->cfg.age_weight == 0)            s->cfg.age_weight             = AGE_WEIGHT;
+    if (s->cfg.ignore_penalty_weight == 0) s->cfg.ignore_penalty_weight  = IGNORE_PENALTY_WEIGHT;
+    if (s->cfg.preempt_delta == 0)         s->cfg.preempt_delta          = PREEMPT_DELTA;
+    if (s->cfg.min_dwell_time_ms == 0)     s->cfg.min_dwell_time_ms      = MIN_DWELL_TIME_MS;
+    if (s->cfg.zone_batch_bonus == 0)      s->cfg.zone_batch_bonus       = ZONE_BATCH_BONUS;
+    if (s->cfg.cross_zone_penalty == 0)    s->cfg.cross_zone_penalty     = CROSS_ZONE_PENALTY;
+
+    s->has_active_task           = false;
+    s->active_task_id.index      = UINT16_MAX;
+    s->active_task_id.generation = 0;
+    s->task_active_since         = 0;
+    s->pending_count             = 0;
+    s->critical_count            = 0;
+    s->top_critical_id.index     = UINT16_MAX;
+    s->top_critical_id.generation = 0;
+}
+
+
+void scheduler_tick(scheduler *sched, task_pool *pool, time_ms current_time) {
+    task *active_task = NULL;
+    float active_raw_priority = -FLT_MAX;
+    bool active_usable = false;
+    bool active_task_changed = false;
+
+    if (sched->has_active_task) {
+        active_task = task_pool_get(pool, sched->active_task_id);
+        if (active_task) {
+            refresh_task(active_task, current_time);
+            active_usable = (active_task->status == TASK_ELIGIBLE);
+            if (active_usable) {
+                active_raw_priority = task_base_score(sched, active_task, current_time);
+            }
+        }
+    }
+
+    time_ms dwell_elapsed = current_time - sched->task_active_since;
+    bool dwell_satisfied = (dwell_elapsed >= sched->cfg.min_dwell_time_ms);
+
+    scheduler_scan_result scan = scheduler_scan_tasks(sched, pool, active_task, active_raw_priority, dwell_satisfied, current_time);
+
+    sched->pending_count   = scan.pending_count;
+    sched->critical_count  = scan.critical_count;
+    sched->top_critical_id = scan.top_critical_id;
+
+    // Case 1: current active task is still valid. Keep it
+    if (sched->has_active_task && active_usable) {
+        return;
+    }
+
+    // Case 2: no valid active task remains, but a replacement exists
+    if (scan.best_id.index != UINT16_MAX) {
+        bool was_uninitialised = !sched->has_active_task;
+        bool was_stale = sched->has_active_task && (active_task == NULL);
+        bool was_ineligible = sched->has_active_task && active_task && !active_usable;
+
+        sched->has_active_task   = true;
+        sched->active_task_id    = scan.best_id;
+        sched->task_active_since = current_time;
+        active_task_changed      = true;
+
+        /* Natural transition onto a new task should not leave behind a stale
+           critical-switch prompt for the task we are auto-selecting */
+        sched->critical_count  = 0;
+        sched->top_critical_id = (task_id){ .index = UINT16_MAX, .generation = 0 };
+
+        if (was_uninitialised) {
+            ESP_LOGI(TAG, "init_select t=%lu active=(%u,%u) score=%.2f",
+                (unsigned long)current_time,
+                (unsigned)scan.best_id.index,
+                (unsigned)scan.best_id.generation,
+                (double)scan.best_score);
+        } else if (was_stale) {
+            ESP_LOGW(TAG, "active_stale t=%lu -> best=(%u,%u) score=%.2f",
+                (unsigned long)current_time,
+                (unsigned)scan.best_id.index,
+                (unsigned)scan.best_id.generation,
+                (double)scan.best_score);
+        } else if (was_ineligible) {
+            ESP_LOGI(TAG, "active_ineligible t=%lu -> best=(%u,%u) score=%.2f",
+                (unsigned long)current_time,
+                (unsigned)scan.best_id.index,
+                (unsigned)scan.best_id.generation,
+                (double)scan.best_score);
+        }
+    }
+    // Case 3: no valid active task remains, and no eligible replacement exists
+    else {
+        ESP_LOGI(TAG, "no_schedulable t=%lu -> clearing active", (unsigned long)current_time);
+        scheduler_clear_active(sched, current_time);
+        sched->pending_count   = 0;
+        sched->critical_count  = 0;
+        sched->top_critical_id = (task_id){ .index = UINT16_MAX, .generation = 0 };
+        return;
+    }
+
+    if (active_task_changed) {
+        task *newly_active = task_pool_get(pool, sched->active_task_id);
+        if (!newly_active) {
+            ESP_LOGE(TAG, "scheduler_tick done: Could not find the task id in the task pool.");
+            scheduler_clear_active(sched, current_time);
+            return;
+        }
+
+        ESP_LOGI(TAG, "active_now=%s (table=%u) t=%lu (%u,%u)",
+            task_kind_to_str(newly_active->kind),
+            newly_active->table_number,
+            (unsigned long)current_time,
+            (unsigned)sched->active_task_id.index,
+            (unsigned)sched->active_task_id.generation);
+    }
+}
+
+
+void scheduler_force_active(scheduler *s, task_id id, time_ms current_time_ms) {
+    s->has_active_task   = true;
+    s->active_task_id    = id;
+    s->task_active_since = current_time_ms;
+    ESP_LOGI(TAG, "force_active (%u,%u) t=%lu",
+        (unsigned)id.index, (unsigned)id.generation, (unsigned long)current_time_ms);
+}

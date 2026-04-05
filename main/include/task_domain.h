@@ -13,8 +13,9 @@
 #ifdef TEST_MODE
 #define TIME_SCALE 1000  // 1 second
 #else
-#define TIME_SCALE (60 * 1000)  // 1 minute
+#define TIME_SCALE (60 * 1000)  // 1 minute (default)
 #endif
+
 
 /* --------------- TASK PROPERTIES --------------- */
 typedef enum {
@@ -45,10 +46,21 @@ static const time_ms TASK_TIME_LIMIT[7] = {
     [TAKE_ORDER]    = 10 * TIME_SCALE,
     [PREPARE_ORDER] = 5 * TIME_SCALE,
     [SERVE_ORDER]   = 5 * TIME_SCALE,
-    [MONITOR_TABLE] = 15 * TIME_SCALE,
+    [MONITOR_TABLE] = 20 * TIME_SCALE,
     [PRESENT_BILL]  = 5 * TIME_SCALE,
     [CLEAR_TABLE]   = 10 * TIME_SCALE,
 };
+
+static const time_ms TASK_CRITICAL_OVRDUE_TIME_LIMIT[7] = {
+    [SERVE_WATER]   = 10 * TIME_SCALE,
+    [TAKE_ORDER]    = 5 * TIME_SCALE,
+    [PREPARE_ORDER] = 8 * TIME_SCALE,
+    [SERVE_ORDER]   = 5 * TIME_SCALE,
+    [MONITOR_TABLE] = 25 * TIME_SCALE,
+    [PRESENT_BILL]  = 5 * TIME_SCALE,
+    [CLEAR_TABLE]   = 20 * TIME_SCALE,
+};
+
 /* --------------- --------------- --------------- */
 
 
@@ -124,6 +136,21 @@ return_status task_mark_completed(task *task);
  *         repeated ignores, or TASK_DOES_NOT_EXIST if task is NULL.
  */
 return_status task_apply_ignore(task *task, time_ms current_time);
+
+
+/**
+ * Undo a previously applied ignore action.
+ *
+ * Restores the task's ignore_count and suppress_until to their pre-ignore
+ * values and marks the task as TASK_ELIGIBLE, making it schedulable again.
+ * Works for both suppressed and killed tasks.
+ *
+ * @param task                Task to restore.
+ * @param prev_ignore_count   ignore_count saved before the ignore was applied.
+ * @param prev_suppress_until suppress_until saved before the ignore was applied.
+ * @return SUCCESS, or TASK_DOES_NOT_EXIST if task is NULL.
+ */
+return_status task_undo_ignore(task *task, uint8_t prev_ignore_count, time_ms prev_suppress_until);
 
 
 /**

@@ -54,7 +54,7 @@ void task_pool_free(task_pool *pool, task_id id) {
     if (slot->generation != id.generation) return;
 
     slot->occupied = false;
-    slot->generation++; /* invalidate stale handles */
+    slot->generation++;
 }
 
 
@@ -95,7 +95,7 @@ task_id task_pool_find_by_key(const task_pool *pool, uint8_t table_number, task_
 
         // Only treat it as “existing” if it’s still relevant
         if (task->table_number == table_number && task->kind == kind &&
-            task->status != TASK_KILLED && task->status != TASK_COMPLETED) {
+            task->status == TASK_ELIGIBLE) {
 
             task_id id = { .index = i, .generation = slot->generation };
             return id;
@@ -113,9 +113,13 @@ task_id task_pool_add(task_pool *pool, uint8_t table_number, task_kind kind, tim
     if (existing.index != UINT16_MAX) {
         task *task = task_pool_get(pool, existing);
         if (task) {
-            // Update “spec defaults".
+            // Update spec defaults.
             task->base_priority = TASK_BASE_PRIORITY[kind];
+            task->created_at = now;
             task->time_limit = now + TASK_TIME_LIMIT[kind];
+            task->suppress_until = 0;
+            task->ignore_count = 0;
+            task->status = TASK_ELIGIBLE;
         }
         return existing;
     }

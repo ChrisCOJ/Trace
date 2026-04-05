@@ -12,7 +12,6 @@
 #include "driver/spi_master.h"
 
 
-
 void draw_label(spi_device_handle_t display, rect r, const char *label, size_t label_len, uint16_t text_color, bool snap_left) {
     // Split label in parts and arrange vertically if too long for its container.
     if (label_len * CHAR_WIDTH * UI_TEXT_SCALE > r.w) {
@@ -123,10 +122,25 @@ void draw_button(spi_device_handle_t display, rect r, const char *label, btn_sty
             border = BUTTON_BORDER;
             text   = COLOR_LABEL_SECONDARY;
             break;
+        case BTN_WARNING:
+            fill   = SECONDARY_ACCENT_COLOR;
+            border = WARNING_BUTTON_BORDER;
+            text   = COLOR_LABEL_WARNING;
+            break;
+        case WARNING_EFFECT:
+            fill   = WARNING_FILL_COLOR;
+            border = WARNING_BUTTON_BORDER;
+            text   = COLOR_LABEL_WARNING_EFFECT;
+            break;
         case BTN_DANGER:
             fill   = SECONDARY_ACCENT_COLOR;
-            border = ORANGE;
-            text   = WHITE;
+            border = DANGER_BUTTON_BORDER;
+            text   = COLOR_LABEL_DANGER;
+            break;
+        case DANGER_EFFECT:
+            fill   = DANGER_FILL_COLOR;
+            border = DANGER_BUTTON_BORDER;
+            text   = COLOR_LABEL_DANGER;
             break;
         default: /* BTN_DISABLED */
             fill   = DARK_GREY;
@@ -160,7 +174,7 @@ void draw_button_bill(spi_device_handle_t display) {
 }
 
 void draw_button_ignore(spi_device_handle_t display) {
-    draw_button(display, MAIN_IGNORE_BTN, "Ignore", BTN_DANGER);
+    draw_button(display, MAIN_IGNORE_BTN, "Ignore", BTN_WARNING);
 }
 
 void draw_button_take_order(spi_device_handle_t display) {
@@ -176,7 +190,8 @@ void draw_button_highlight(spi_device_handle_t display, ui_action act) {
         case UI_ACTION_COMPLETE:
             draw_button(display, MAIN_COMPLETE_BTN,           "Complete",   BTN_SECONDARY); break;
         case UI_ACTION_IGNORE:
-            draw_button(display, MAIN_IGNORE_BTN,             "Ignore",     BTN_PRIMARY);   break;
+            draw_button(display, MAIN_IGNORE_BTN,             "Ignore",     WARNING_EFFECT);break;
+
         case UI_ACTION_BILL:
             draw_button(display, MAIN_BILL_BTN,               "Bill",       BTN_PRIMARY);   break;
         case UI_ACTION_TAKE_ORDER:
@@ -187,6 +202,12 @@ void draw_button_highlight(spi_device_handle_t display, ui_action act) {
             draw_button(display, TABLE_INFO_BILL_BTN,         "Bill",       BTN_PRIMARY);   break;
         case UI_ACTION_TABLE_INFO_UNDO:
             draw_button(display, TABLE_INFO_UNDO_BTN,         "Undo",       BTN_PRIMARY);   break;
+        case UI_ACTION_MAIN_UNDO:
+            draw_button(display, MAIN_IGNORE_BTN,  "Undo",  BTN_PRIMARY);   break;
+        case UI_ACTION_CONFIRM_ALLOW:
+            draw_button(display, CONFIRM_ALLOW_BTN, "Allow", BTN_SECONDARY); break;
+        case UI_ACTION_CONFIRM_DENY:
+            draw_button(display, CONFIRM_DENY_BTN,  "Deny",  WARNING_EFFECT);break;
         default: break;
     }
 }
@@ -200,7 +221,7 @@ void restore_button(spi_device_handle_t display, ui_action act, uint8_t sel_tabl
         case UI_ACTION_COMPLETE:
             draw_button(display, MAIN_COMPLETE_BTN,  "Complete",   BTN_PRIMARY);   break;
         case UI_ACTION_IGNORE:
-            draw_button(display, MAIN_IGNORE_BTN,    "Ignore",     BTN_DANGER);    break;
+            draw_button(display, MAIN_IGNORE_BTN,    "Ignore",     BTN_WARNING);    break;
         case UI_ACTION_BILL:
             draw_button(display, MAIN_BILL_BTN,      "Bill",       BTN_SECONDARY); break;
         case UI_ACTION_TAKE_ORDER:
@@ -221,8 +242,30 @@ void restore_button(spi_device_handle_t display, ui_action act, uint8_t sel_tabl
             draw_button(display, TABLE_INFO_UNDO_BTN, "Undo",
                         table_can_undo(system_get_table(sel_table)) ? BTN_SECONDARY : BTN_DISABLED);
             break;
+        case UI_ACTION_MAIN_UNDO:
+            draw_button(display, MAIN_IGNORE_BTN, "Undo", BTN_SECONDARY);
+            break;
+        case UI_ACTION_CONFIRM_ALLOW:
+            draw_button(display, CONFIRM_ALLOW_BTN, "Allow", BTN_PRIMARY);  break;
+        case UI_ACTION_CONFIRM_DENY:
+            draw_button(display, CONFIRM_DENY_BTN,  "Deny",  BTN_DANGER);   break;
         default: break;
     }
+}
+
+
+void draw_pending_badge(spi_device_handle_t display, uint8_t pending_count, uint8_t critical_count) {
+    if (pending_count == 0) {
+        draw_filled_rect(display, MAIN_QUEUE_BADGE.x, MAIN_QUEUE_BADGE.y,
+                         MAIN_QUEUE_BADGE.w, MAIN_QUEUE_BADGE.h, BG, 0);
+        return;
+    }
+    uint16_t color = (critical_count > 0) ? ORANGE : GREY;
+    draw_filled_rect(display, MAIN_QUEUE_BADGE.x, MAIN_QUEUE_BADGE.y,
+                     MAIN_QUEUE_BADGE.w, MAIN_QUEUE_BADGE.h, color, UI_CORNER_RADIUS);
+    char count_str[4];
+    snprintf(count_str, sizeof(count_str), "%u", (unsigned)pending_count);
+    draw_label(display, MAIN_QUEUE_BADGE, count_str, strlen(count_str), WHITE, false);
 }
 
 

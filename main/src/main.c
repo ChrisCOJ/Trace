@@ -26,13 +26,17 @@
 #define SYS_EN_GPIO 41
 #define TAG         "main"
 
+// #define WIFI_ENABLED
+
 
 void scheduler_tick_task(void *arg) {
     (void)arg;
 
     while (1) {
         time_ms current_time_ms = get_time();
-        pos_client_drain_events(current_time_ms);
+        #ifdef WIFI_ENABLED
+            pos_client_drain_events(current_time_ms);
+        #endif
         trace_system_tick(current_time_ms);
         vTaskDelay(pdMS_TO_TICKS(500));
     }
@@ -64,8 +68,9 @@ void app_main(void) {
     scheduler_config system_config = {0};
     trace_system_init(&system_config);
 
-    /* POS client — WiFi init and receive task */
-    pos_client_start();
+    #ifdef WIFI_ENABLED 
+        pos_client_start();
+    #endif
 
     /* Battery monitor */
     battery_monitor_init();

@@ -51,6 +51,15 @@ return_status task_apply_ignore(task *task, time_ms current_time) {
 }
 
 
+return_status task_undo_ignore(task *task, uint8_t prev_ignore_count, time_ms prev_suppress_until) {
+    if (!task) return TASK_DOES_NOT_EXIST;
+    task->ignore_count   = prev_ignore_count;
+    task->suppress_until = prev_suppress_until;
+    task->status         = TASK_ELIGIBLE;
+    return SUCCESS;
+}
+
+
 return_status refresh_task(task *task, time_ms current_time) {
     if (!task) return TASK_DOES_NOT_EXIST;
 

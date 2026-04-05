@@ -47,4 +47,7 @@ void draw_back_icon(spi_device_handle_t display);
 void restore_button(spi_device_handle_t display, ui_action act, uint8_t sel_table);
 
 
+void draw_pending_badge(spi_device_handle_t display, uint8_t pending_count, uint8_t critical_count);
+
+
 #endif

@@ -94,8 +94,18 @@ task_id system_get_active_task_id(void);
 
 const task *system_get_active_task(void);
 
+bool system_undo_task_ignore(task_id id, uint8_t prev_ignore_count, time_ms prev_suppress_until, time_ms now);
+
 task *system_get_current_task_pointer_for_table(uint8_t table_index);
 
 task_kind system_get_current_task_kind_for_table(uint8_t table_index);
+
+uint8_t system_get_pending_count(void);
+
+uint8_t system_get_critical_pending_count(void);
+
+const task *system_get_top_critical_task(void);
+
+void system_force_active_task(task_id id, time_ms now);
 
 #endif

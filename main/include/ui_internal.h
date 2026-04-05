@@ -7,6 +7,7 @@
 
 #include "../include/display_util.h"
 #include "../include/table_fsm.h"
+#include "../include/types.h"
 
 
 extern uint8_t UI_GRID_PAGE;
@@ -50,6 +51,24 @@ enum {
     UI_TILE_START_X = 10,
     UI_TILE_START_Y = 35,
 
+    UI_MAIN_TIME_X = 0,
+    UI_MAIN_TIME_Y = 113,
+    UI_MAIN_TIME_WIDTH = 240,
+
+    MAIN_TASK_KIND_Y = 60,
+    MAIN_TASK_KIND_W = 240,
+    MAIN_TASK_KIND_H = 30,
+
+    MAIN_TASK_TABLE_Y = 84,
+    MAIN_TASK_TABLE_W = 240,
+    MAIN_TASK_TABLE_H = 30,
+
+    UI_CENTER_X = 120,
+
+    MAIN_NO_TASK_Y = 70,
+    MAIN_NO_TASK_W = 240,
+    MAIN_NO_TASK_H = 30,
+
     UI_TABLE_INFO_BTN_H = 60,
     UI_TABLE_INFO_TAKE_ORDER_Y = 115,
     UI_TABLE_INFO_TAKE_ORDER_W = UI_HALF_BTN_W,
@@ -73,6 +92,20 @@ enum {
     UI_SLEEP_CORNER_MAX_Y = 40,
     UI_SLEEP_HOLD_MS      = 1000,
     UI_INACTIVITY_SLEEP_MS = 30000,
+
+    UI_UNDO_TIMEOUT_MS    = 5000,
+    UI_SWIPE_THRESHOLD    = 60,
+
+    /* Confirmation overlay */
+    UI_CONFIRM_OVERLAY_Y  = 0,
+    UI_CONFIRM_OVERLAY_H  = UI_SCREEN_H,
+    UI_CONFIRM_BTN_Y      = 210,
+    UI_CONFIRM_BTN_W      = 100,
+    UI_CONFIRM_BTN_H      = 50,
+
+    /* Pending queue badge (top-left of main screen) */
+    UI_QUEUE_BADGE_W      = 55,
+    UI_QUEUE_BADGE_H      = 30,
 
     UI_BATT_X       = 195,
     UI_BATT_Y       = 8,
@@ -150,6 +183,10 @@ typedef enum {
     UI_ACTION_TABLE_INFO_UNDO,
     UI_ACTION_GRID_PREV_PAGE,
     UI_ACTION_GRID_NEXT_PAGE,
+    UI_ACTION_OPEN_TASK_TABLE,
+    UI_ACTION_MAIN_UNDO,
+    UI_ACTION_CONFIRM_ALLOW,
+    UI_ACTION_CONFIRM_DENY,
 } ui_action;
 
 
@@ -159,6 +196,14 @@ typedef struct {
     task_kind task_kind;
     uint8_t table_number;
     uint8_t urgency_level;   // 0 = normal, 1 = overdue, 2 = critically overdue (>= 5 min past deadline)
+    time_ms deadline;
+
+    uint8_t pending_count;          // eligible tasks other than the active task
+    uint8_t critical_count;         // pending tasks exceeding the switch-prompt threshold
+    task_id critical_task_id;       // top critical pending task
+    task_kind critical_task_kind;
+    uint8_t critical_table_number;
+    time_ms critical_deadline;
 } ui_snapshot;
 
 
@@ -167,16 +212,12 @@ typedef struct {
 typedef enum {
     BTN_PRIMARY,
     BTN_SECONDARY,
+    BTN_WARNING,
+    WARNING_EFFECT,
     BTN_DANGER,
+    DANGER_EFFECT,
     BTN_DISABLED,
 } btn_style;
-
-
-typedef enum {
-    UI_TASK_STATE_IDLE = 0,
-    UI_TASK_STATE_READY,
-    UI_TASK_STATE_IN_PROGRESS,
-} ui_task_state;
 
 
 typedef struct {
@@ -188,17 +229,23 @@ typedef struct {
 
 
 /* ---- Colour scheme ---- */
-static const uint16_t COLOR_LABEL_PRIMARY   = BLACK;
-static const uint16_t COLOR_LABEL_SECONDARY = WHITE;
-static const uint16_t COLOR_LABEL_CHROME    = WHITE;
+static const uint16_t COLOR_LABEL_PRIMARY        = BLACK;
+static const uint16_t COLOR_LABEL_SECONDARY      = WHITE;
+static const uint16_t COLOR_LABEL_WARNING        = WHITE;
+static const uint16_t COLOR_LABEL_WARNING_EFFECT = BLACK;
+static const uint16_t COLOR_LABEL_DANGER         = WHITE;
+static const uint16_t COLOR_LABEL_CHROME         = WHITE;
 
-static const uint16_t BG                    = BLACK;
+static const uint16_t BG                         = BLACK;
 
-static const uint16_t PRIMARY_ACCENT_COLOR  = GREEN;
-static const uint16_t SECONDARY_ACCENT_COLOR = BLACK;
-static const uint16_t DANGER_COLOR          = RED;
+static const uint16_t PRIMARY_ACCENT_COLOR       = GREEN;
+static const uint16_t SECONDARY_ACCENT_COLOR     = BLACK;
+static const uint16_t WARNING_FILL_COLOR         = ORANGE;
+static const uint16_t DANGER_FILL_COLOR          = RED;
 
-static const uint16_t BUTTON_BORDER         = GREEN;
+static const uint16_t BUTTON_BORDER              = GREEN;
+static const uint16_t WARNING_BUTTON_BORDER      = ORANGE;
+static const uint16_t DANGER_BUTTON_BORDER       = RED;
 
 
 /* ---- Button / region layout (screen-space coordinates) ---- */
@@ -238,6 +285,13 @@ static const rect MAIN_TABLES_BTN = {
     .w = UI_TOPBAR_W,
     .h = UI_TOPBAR_H
 };
+/* Tappable task info area on the main screen — navigates to the active task's table. */
+static const rect MAIN_TASK_AREA = {
+    .x = 0,
+    .y = UI_TOPBAR_H + 5,
+    .w = UI_SCREEN_W,
+    .h = 95
+};
 static const rect TABLE_INFO_TAKE_ORDER_BTN = {
     .x = UI_MARGIN_X,
     .y = UI_TABLE_INFO_TAKE_ORDER_Y,
@@ -273,6 +327,24 @@ static const rect TABLE_GRID_NEXT_BTN = {
     .y = UI_BOTTOM_BACK_Y,
     .w = UI_GRID_NAV_BTN_W,
     .h = UI_BACK_BTN_H
+};
+static const rect MAIN_QUEUE_BADGE = {
+    .x = 0,
+    .y = 0,
+    .w = UI_QUEUE_BADGE_W,
+    .h = UI_QUEUE_BADGE_H
+};
+static const rect CONFIRM_ALLOW_BTN = {
+    .x = UI_MARGIN_X,
+    .y = UI_CONFIRM_BTN_Y,
+    .w = UI_CONFIRM_BTN_W,
+    .h = UI_CONFIRM_BTN_H
+};
+static const rect CONFIRM_DENY_BTN = {
+    .x = UI_SCREEN_W - UI_MARGIN_X - UI_CONFIRM_BTN_W,
+    .y = UI_CONFIRM_BTN_Y,
+    .w = UI_CONFIRM_BTN_W,
+    .h = UI_CONFIRM_BTN_H
 };
 
 
